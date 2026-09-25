@@ -561,7 +561,7 @@ function defaults(){
     sections:['Verse','Chorus','Bridge','Outro'].map(name=>({name,bars:4,chords:[],drums:pat6('empty')})),
     songMode:false,chain:[{sec:0,rep:2},{sec:1,rep:2},{sec:0,rep:1},{sec:2,rep:1},{sec:1,rep:2}],songEnd:'stop',switchAt:'loop',autoFill:true,
     edLen:16,edSnap:4,
-    tp:{split:0,preroll:2,slate:true,tail:4,midiCue:true,midiRec:false,midiLoop:-1,takeMode:'loop',takeReps:4,countIn:true,chk:{},cueEvery:1,startMode:'arm',clock:false,midiOffset:0,mig2:true},
+    tp:{split:0,preroll:2,slate:true,tail:4,midiCue:true,midiRec:false,midiLoop:-1,takeMode:'loop',takeReps:4,countIn:true,chk:{},cueEvery:1,startMode:'start',clock:true,midiOffset:0,mig2:true},
     takes:[],takeN:0,
     diag:{fw:'',set:'',rec:'',ans:{},notes:{},ran:{},cal:null,calResult:null,calSug:null}
   };
@@ -1313,7 +1313,7 @@ function buildPanels(){
   <h3>TP-7 control</h3>
   <div class="orow"><button type="button" class="btn" data-act="midi">Connect MIDI</button><select id="midiOut" aria-label="MIDI output"><option value="">Not connected</option></select></div>
   <p class="status" id="midiStatus">Not connected. MIDI needs Chrome or Edge on a computer or Android, or a MIDI browser app such as MIDIWeb Browser on iPhone.</p>
-  <div class="orow"><span class="lbl">Start recording</span>${segH('tp.startMode',[['arm','Arm, you start'],['start','MIDI start'],['beep','Beep'],['rocker','Rocker'],['manual','By hand']])}</div>
+  <div class="orow"><span class="lbl">Start recording</span>${segH('tp.startMode',[['start','MIDI start'],['arm','Arm, you start'],['manual','By hand']])}</div>
   <p class="note" id="startNote"></p>
   <div class="orow"><button type="button" class="btn" data-act="testStart">Test: record 4 s</button><button type="button" class="btn" data-act="diag">Run TP-7 diagnostics</button></div>
   <div class="orow">${togH('tp.clock','Send tempo as MIDI clock')}${togH('tp.midiCue','Set cue markers')}</div>
@@ -1453,11 +1453,12 @@ const CHECK=[
   {id:'cable',t:()=>'Connect the iPhone to the TP-7 with a USB-C cable.'},
   {id:'source',t:()=>'On the TP-7, set the source to manual: USB on track 1, the guitar jack on track 2.'},
   {id:'guitar',t:()=>'Run the guitar through a DI box, preamp or pedal with a line out. The TP-7 input is 9.5 kΩ, too low for a passive guitar.'},
-  {id:'tempo',t:()=>`Tempo: turn on MIDI clock sync on the TP-7 so it follows the app, or set its record tempo to ${S.bpm} bpm by hand. Keep its metronome and count-in off.`},
-  {id:'midicue',opt:true,t:()=>'For markers and take review jumps: turn on MIDI-CUE in the TP-7 settings.'},
+  {id:'autooff',t:()=>'Turn off auto start in the TP-7 record settings. While it is on, REC shows a T and the app cannot start a recording.'},
+  {id:'tempo',t:()=>`Set the TP-7 record tempo to ${S.bpm} bpm by hand if you use its metronome or bar jumps. It does not follow the app's clock. Keep its count-in off.`},
+  {id:'midicue',opt:true,t:()=>'For markers and take review jumps: turn on MIDI-CUE in the TP-7 MIDI settings. Markers have not worked on your TP-7 yet.'},
   {id:'monitor',t:()=>'Plug headphones into the TP-7 and turn input thru on, so you hear the app and the guitar together.'},
   {id:'levels',t:()=>'Play the test tone. It should sit well below the top of the TP-7 meter. Then set the guitar gain.',x:()=>`<div class="orow"><button type="button" class="tog" id="toneBtn" data-act="tone" aria-pressed="${!!R.tone}">Test tone, 1 kHz at −18 dBFS</button><output id="peakOut">Peak: silent</output></div>`},
-  {id:'auto',opt:true,t:()=>'For the Beep start method: turn on TP-7 auto start record, set to start only. Without MIDI, arm the TP-7 by hand before each take.'}
+
 ];
 const ckOn=c=>c.id==='tempo'?S.tp.chk.tempo===S.bpm:!!S.tp.chk[c.id];
 function renderChk(){
@@ -1486,11 +1487,11 @@ function renderTpInfo(){
   $('#tkSum').textContent=sum;
   const sn=$('#startNote'), sm=S.tp.startMode;
   sn.textContent=(sm==='arm'?'Arms the TP-7 with CC 14. You start its recording during the pre-roll. After the tail, the app stops it with MIDI stop, which your TP-7 accepted in the diagnostics.'
-    :sm==='start'?'Arms the TP-7 with CC 14, sends MIDI start on the downbeat and MIDI stop after the tail. The recording then begins at bar 1.'
+    :sm==='start'?'Arms the TP-7, sends MIDI start on the downbeat and MIDI stop after the tail, so the recording begins at bar 1. Auto start must be off on the TP-7: while it is on, REC shows a T and MIDI cannot start a recording.'
     :sm==='beep'?'Arms the TP-7 with CC 14. The start beep then triggers its auto start record, so turn that on in the TP-7 record settings, set to start only.'
     :sm==='rocker'?'Arms the TP-7 with CC 14, then pushes its tape rocker forward with CC 18 on the downbeat, and back to stop after the tail.'
-    :'You press record on the TP-7 during the pre-roll.')+(sm!=='manual'?' Use the test button to see which method your TP-7 accepts.':'');
-  $('#clockNote').textContent=S.tp.clock?`Sends ${S.bpm} bpm as MIDI clock at 24 pulses per beat. Turn on MIDI clock sync on the TP-7 so its tempo, metronome and bar jumps follow the app. Markers and the take review do not need it, because the app times them itself.`:'MIDI clock is off. Set the TP-7 record tempo by hand.';
+    :'You press record on the TP-7 during the pre-roll.')+(sm==='start'?' Your TP-7 recorded with this method in the diagnostics.':'');
+  $('#clockNote').textContent=S.tp.clock?`Sends ${S.bpm} bpm as MIDI clock. Your TP-7 does not change its tempo from it, but MIDI start was tested with the clock running, so keep it on until diagnostics test 25 shows it is not needed.`:'MIDI clock is off. If MIDI start stops working, turn it back on.';
   $('#offOut').textContent=(S.tp.midiOffset>0?'+':'')+S.tp.midiOffset+' ms';
   renderChk();
 }
@@ -1855,7 +1856,10 @@ DIAG.push(
   acts:[['Run',async()=>{ initAudio(); mNow([0xB0,14,127]); await sleep(1000); const t=ctx.currentTime+0.02, o=ctx.createOscillator(), g=ctx.createGain(); o.frequency.value=1000;
     g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(0.7,t+0.005); g.gain.setValueAtTime(0.7,t+0.995); g.gain.linearRampToValueAtTime(0,t+1); o.connect(g); g.connect(A.fixed); o.start(t); o.stop(t+1.02);
     await sleep(4000); mNow([0xB0,14,0]); return 'Sent arm, played a loud tone, sent disarm.'; }]],
-  qs:[['What happened?',['Recorded from the tone','Recorded, but late','Only armed','Nothing']],['What does the T next to REC mean?',['It shows when auto start is on','It shows either way','Not sure']]]}
+  qs:[['What happened?',['Recorded from the tone','Recorded, but late','Only armed','Nothing']],['What does the T next to REC mean?',['It shows when auto start is on','It shows either way','Not sure']]]},
+ {id:'noclk',t:'MIDI start without the clock',how:'Auto start off. Run mutes the app clock, arms, sends MIDI start 1 s later, MIDI stop 4 s after that, then disarms. If this records, the app can stop sending clock.',
+  acts:[['Run',async()=>{ R.clockMute=true; await sleep(300); mNow([0xB0,14,127]); await sleep(1000); mNow([0xFA]); await sleep(4000); mNow([0xFC]); await sleep(300); mNow([0xB0,14,0]); R.clockMute=false; return 'Sent arm, start, stop, disarm with the clock muted.'; }]],
+  qs:[['What happened?',REC_OPTS]]}
 );
 DIAG.forEach((t,i)=>{ t.t=(i+1)+'. '+t.t.replace(/^\d+\.\s*/,''); });
 async function measureTimer(){
@@ -2372,7 +2376,8 @@ function renderAll(){
 S=load(); if(!S){ S=defaults(); seedDemo(); }
 if(S.tp.takeMode==='section') S.tp.takeMode='loop';
 if(!['loop','jam','song'].includes(S.tp.takeMode)) S.tp.takeMode='loop';
-if(!Array.isArray(S.takes)) S.takes=[]; S.diag=Object.assign(defaults().diag,S.diag||{}); ['ans','notes','ran'].forEach(k=>{ if(!S.diag[k]||typeof S.diag[k]!=='object') S.diag[k]={}; }); if(!S.tp.startMode) S.tp.startMode='arm'; if(!S.tp.mig2){ if(S.tp.startMode==='start') S.tp.startMode='arm'; S.tp.clock=false; S.tp.mig2=true; } if(S.tp.clock==null) S.tp.clock=true; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
+if(!Array.isArray(S.takes)) S.takes=[]; S.diag=Object.assign(defaults().diag,S.diag||{}); ['ans','notes','ran'].forEach(k=>{ if(!S.diag[k]||typeof S.diag[k]!=='object') S.diag[k]={}; }); if(!S.tp.startMode) S.tp.startMode='arm'; if(!S.tp.mig2){ if(S.tp.startMode==='start') S.tp.startMode='arm'; S.tp.clock=false; S.tp.mig2=true; } if(!S.tp.mig3){ if(['arm','beep','rocker'].includes(S.tp.startMode)) S.tp.startMode='start'; S.tp.clock=true; S.tp.mig3=true; }
+if(S.tp.clock==null) S.tp.clock=true; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
 buildPanels(); bindStick(); bindKeys(); bindChords(); bindReview(); bindDiag(); bindGlobal();
 R.tab='play'; R.shown=new Set(['play']); renderAll(); showTab('play'); requestAnimationFrame(frame);
 if(matchMedia('(orientation: portrait)').matches&&Math.min(innerWidth,innerHeight)<520) setTimeout(()=>toast('Tip: turn your phone sideways for the full layout.'),1800);
