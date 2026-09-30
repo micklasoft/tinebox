@@ -375,6 +375,18 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
   .drum-ctl{flex-wrap:wrap}
 }
 
+/* guitar looper */
+.transport #loopBtn[aria-pressed="true"]{background:var(--sb);color:#fff}
+.lp-pop{width:min(330px,calc(100vw - 28px));gap:8px;padding:10px 12px;max-height:calc(100% - 76px);overflow:auto}
+.lp-pop .orow2 .tog{flex:none;padding:6px 12px}
+.lp-level{flex:1;min-width:0}
+.lp-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.lp-head b{font-size:16px}
+.lp-state{font-size:13px;color:var(--ink-2);text-align:right}
+.lp-pop .take{height:40px;margin:0;font-size:16px}
+.lp-pop .take:disabled{opacity:.6}
+.lp-lat{flex:1;min-width:0;font-size:13px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
 /* overlay + toast */
 .start{position:fixed;inset:0;z-index:50;background:var(--body);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:24px;text-align:center}
 .start h1{font-family:'Doto',ui-monospace,monospace;font-weight:900;font-size:52px;margin:0;line-height:1}
@@ -404,6 +416,7 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
       <button class="tb main rec" id="btnRec" data-act="rec" aria-pressed="false" aria-label="Record chords into the loop" title="Record into the loop"><i class="rd"></i></button>
       <button class="tb" data-act="undo" aria-label="Undo" title="Undo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
       <button class="tb tog" data-k="metro" aria-pressed="false" aria-label="Metronome" title="Metronome"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.6 3.5h4.8l4.1 16.2a.8.8 0 0 1-.8 1H6.3a.8.8 0 0 1-.8-1z"/><path d="M8 15.5h8"/><path d="M12 15.5 16.5 7"/></svg></button>
+      <button class="tb" id="loopBtn" data-act="loopPop" aria-pressed="false" aria-haspopup="dialog" aria-expanded="false" aria-label="Guitar looper" title="Guitar looper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h16"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
     </div>
   </header>
   <div class="songbar">
@@ -563,7 +576,8 @@ function defaults(){
     edLen:16,edSnap:4,
     tp:{split:0,preroll:2,slate:true,tail:4,midiCue:true,midiRec:false,midiLoop:-1,takeMode:'loop',takeReps:4,countIn:true,chk:{},cueEvery:1,startMode:'start',clock:false,midiOffset:0,mig2:true},
     takes:[],takeN:0,
-    diag:{fw:'',set:'',rec:'',ans:{},notes:{},ran:{},cal:null,calResult:null,calSug:null}
+    diag:{fw:'',set:'',rec:'',ans:{},notes:{},ran:{},cal:null,calResult:null,calSug:null},
+    looper:{bars:2,level:0.8,muted:false,lat:null,latHow:''}
   };
 }
 function mkEvent(deg,dir,s,len){
@@ -654,7 +668,7 @@ function initAudio(){
   A.lim=ctx.createDynamicsCompressor(); A.lim.threshold.value=-2; A.lim.knee.value=0; A.lim.ratio.value=20; A.lim.attack.value=0.002; A.lim.release.value=0.12;
   A.master.connect(A.lim);
   A.out=G(1); A.lim.connect(A.out); A.out.connect(ctx.destination);
-  A.fixed=G(1); A.fixed.connect(A.out);           // test tone and slate bypass the limiter
+  A.fixed=G(1); A.fixDly=ctx.createDelay(0.05); A.fixDly.delayTime.value=0.006; A.fixed.connect(A.fixDly); A.fixDly.connect(A.out); // test sounds skip the limiter but keep its 6 ms look-ahead, so they stay in step with the music
   A.click=G(0.35); A.click.connect(A.master);
   const ms=ctx.createChannelSplitter(2); A.anL=ctx.createAnalyser(); A.anR=ctx.createAnalyser(); A.anL.fftSize=A.anR.fftSize=1024;
   A.out.connect(ms); ms.connect(A.anL,0); ms.connect(A.anR,1);
@@ -802,6 +816,7 @@ function scheduleStep(t){
       if(p%16===0) R.crashNext=false;
       drumStep(sec,p,tt,abs);
       if(S.metro&&p%4===0) click(tt,p%16===0);
+      if(LP.buf&&!LP.rec&&!S.looper.muted&&((abs-LP.phase)%LP.steps+LP.steps)%LP.steps===0) lpPlay(t);
       const ev=sec.chords.find(e=>e.s===p);
       if(ev){
         if(R.skipChord===abs) R.skipChord=null;
@@ -958,7 +973,7 @@ function padHit(i){
 function play(preroll){
   initAudio(); if(!ctx||R.playing) return;
   R.history=[]; R.cues=[]; R.zeroTime=null; R.slateTime=null; R.skipDrum.clear(); R.skipChord=null;
-  R.absStep=-(preroll||0)*16; R.secStep=0; R.rep=0; R.queued=null; R.crashNext=false;
+  R.absStep=-(preroll||0)*16; R.secStep=0; R.rep=0; R.queued=null; R.crashNext=false; LP.phase=0;
   R.loopOpen=false; R.loopMarked=false; R.mcues=[]; R.markTime=null;
   const ch=activeChain(); if(ch){ R.chainPos=0; R.cur=ch[0].sec; }
   if(R.take&&S.tp.midiCue) midiSend([0xB0,16,127]);
@@ -970,6 +985,7 @@ function stop(){
   R.playing=false; R.queued=null;
   if(R.gate&&!R.gate.held){ endGateVoices(R.gate,t); R.gate=null; }
   R.voices.slice().forEach(v=>{ if(v.t>t) v.release(t); });
+  lpStopVoices(t);
   passEnd(t);
   if(R.take) finishTake(t); else releaseWake();
   renderTransport();
@@ -1091,8 +1107,9 @@ function midiList(){
 const nativeMidi=()=>window.webkit&&window.webkit.messageHandlers&&window.webkit.messageHandlers.tineboxMidi;
 const midiReady=()=>!!(nativeMidi()||(R.midi&&R.midiOutId));
 function audioToPerf(at){
-  try{ if(ctx.getOutputTimestamp){ const o=ctx.getOutputTimestamp(); if(o&&o.performanceTime>0&&o.contextTime>0) return o.performanceTime+(at-o.contextTime)*1000; } }catch(e){}
-  return performance.now()+(at-ctx.currentTime+lat())*1000;
+  const LA=6; // the output limiter looks 6 ms ahead, so the music leaves that much after its graph time
+  try{ if(ctx.getOutputTimestamp){ const o=ctx.getOutputTimestamp(); if(o&&o.performanceTime>0&&o.contextTime>0) return o.performanceTime+(at-o.contextTime)*1000+LA; } }catch(e){}
+  return performance.now()+(at-ctx.currentTime+lat())*1000+LA;
 }
 function midiSend(bytes,at){
   const nm=nativeMidi(), due=at!=null&&ctx?audioToPerf(at)+(+S.tp.midiOffset||0):null, d=due==null?0:Math.max(0,due-performance.now());
@@ -1174,6 +1191,7 @@ function setK(k,v){
   if(k==='snd.preset'){ Object.assign(S.snd,PRESETS[v]); S.snd.preset=v; }
   if(k.startsWith('snd.')||k==='bpm') applySound();
   if(k.startsWith('lv.')||k==='R.muteK'||k==='R.muteD') applyMix();
+  if(k.startsWith('looper.')) lpApply();
   if(k==='tp.split') applyRouting();
   if(k==='kit') applyKit();
   if(k==='key'||k==='mode'){ lastVoicing=null; renderKeys(); renderLane(R.laneSec<0?R.cur:R.laneSec); renderPal(); renderTL(); }
@@ -1190,6 +1208,7 @@ const togH=(k,l)=>`<button type="button" class="tog" data-k="${k}" aria-pressed=
 const rngH=(k,l,min,max,step)=>`<label class="rng"><span>${l}</span><input type="range" data-k="${k}" min="${min}" max="${max}" step="${step}"><output data-o="${k}"></output></label>`;
 function fmtK(k,v){
   if(k==='swing') return Math.round(v)+'%';
+  if(k==='looper.level') return Math.round(v*100)+'%';
   if(k==='snd.decay') return v.toFixed(1)+' s';
   if(k==='snd.tremRate') return v.toFixed(1)+' Hz';
   if(k.startsWith('lv.')) return v<=0.001?'off':(20*Math.log10(v)).toFixed(1)+' dB';
@@ -1451,11 +1470,11 @@ function renderCues(){
 }
 const CHECK=[
   {id:'cable',t:()=>'Connect the iPhone to the TP-7 with a USB-C cable.'},
-  {id:'source',t:()=>'On the TP-7, set the source to manual: USB on track 1, the guitar jack on track 2.'},
+  {id:'source',t:()=>'On the TP-7, set the source to manual: USB on track 1, the guitar jack on track 2. Takes need the USB input recorded, or the app is missing from them.'},
   {id:'guitar',t:()=>'Run the guitar through a DI box, preamp or pedal with a line out. The TP-7 input is 9.5 kΩ, too low for a passive guitar.'},
-  {id:'autooff',t:()=>'Turn off auto start in the TP-7 record settings. While it is on, REC shows a T and the app cannot start a recording.'},
+  {id:'autooff',t:()=>'Turn off auto start and count-in in the TP-7 record settings. Auto start shows a T next to REC and blocks MIDI start, and count-in can shift where the recording begins.'},
   {id:'tempo',t:()=>`Set the TP-7 record tempo to ${S.bpm} bpm by hand if you use its metronome or bar jumps. It does not follow the app's clock. Keep its count-in off.`},
-  {id:'midicue',opt:true,t:()=>'For markers and take review jumps: turn on MIDI-CUE in the TP-7 MIDI settings. Markers have not worked on your TP-7 yet.'},
+  {id:'midicue',t:()=>'Set the TP-7 MIDI mode to cue. MIDI start records in that mode, and the MIDI loop works too. Markers have not worked yet.'},
   {id:'monitor',t:()=>'Plug headphones into the TP-7 and turn input thru on, so you hear the app and the guitar together.'},
   {id:'levels',t:()=>'Play the test tone. It should sit well below the top of the TP-7 meter. Then set the guitar gain.',x:()=>`<div class="orow"><button type="button" class="tog" id="toneBtn" data-act="tone" aria-pressed="${!!R.tone}">Test tone, 1 kHz at −18 dBFS</button><output id="peakOut">Peak: silent</output></div>`},
 
@@ -1719,6 +1738,7 @@ function midiInputs(){
   try{ if(!R.midi||!R.midi.inputs) return; R.midi.inputs.forEach(inp=>{ inp.onmidimessage=e=>{
     const d=[...e.data], port=inp.name||'?', now=performance.now(), hx=d.map(x=>x.toString(16).padStart(2,'0')).join(' ');
     R.inCount=(R.inCount||0)+1; (R.inLog=R.inLog||[]).push(port+': '+hx); if(R.inLog.length>12) R.inLog.shift();
+    if(d[0]!==0xF8){ const key=d.length>1?`${d[0].toString(16)} ${d[1]}`:d[0].toString(16), m=(R.inMap=R.inMap||{}), e=m[key]||(m[key]={n:0,v:new Set()}); e.n++; if(d.length>2&&e.v.size<12) e.v.add(d[2]); }
     if(R.capOn){ R.cap2.push({t:now,port,d}); if((d[0]===0xFA||d[0]===0xFB)&&R.capId) setDs(R.capId,`Start message from ${port} just arrived.`); }
     (R.waiters||[]).slice().forEach(w=>{ if(w.test({port,d})){ R.waiters.splice(R.waiters.indexOf(w),1); w.res({t:now,port,d}); } });
     const o=$('#dgInOut'); if(o) o.textContent=`${R.inCount} received. Last: ${port}: ${hx}`;
@@ -1952,16 +1972,29 @@ DIAG.push(
  {id:'restart',t:'Restart playback by MIDI',how:'MIDI mode sync. Load a recording of a few seconds, stopped and not armed. Run sends MIDI start five times, 2 s apart, then MIDI stop.',
   acts:[['Run',async()=>{ mNow([0xFA]); for(let k=0;k<4;k++){ await sleep(2000); mNow([0xFA]); } await sleep(2000); mNow([0xFC]); return 'Sent start five times, 2 s apart, then stop.'; }]],
   qs:[['What did each new start do?',['Jumped back to the beginning','Kept playing','Stopped','Something else']],['How did each restart sound?',['Seamless','Short gap','Glitch or tape sound']]]},
- {id:'looprec',t:'Record 2 bars, then loop them',how:'MIDI mode sync, auto start off, source set so the line input is recorded. Run plays a 1-bar count-in, records 2 bars at the project tempo while clicking, stops, then restarts the new recording 4 times while clicking along. Play guitar during the 2 recorded bars. Recorded clicks and new clicks should land together.',
+ {id:'looprec',t:'Record 2 bars, then loop them',how:'TP-7 count-in off. MIDI mode sync, auto start off, source set so the line input is recorded. Run plays a 1-bar count-in, records 2 bars at the project tempo while clicking, stops, then restarts the new recording 4 times while clicking along. Play guitar during the 2 recorded bars. Recorded clicks and new clicks should land together.',
   acts:[['Run',runLoopRec]],
   qs:[['Did it record exactly 2 bars?',['Yes','Too long','Too short','Did not record']],['Did the loop stay in time with the new clicks?',['Yes, tight','Close, with a flam or gap','No']]]}
 );
 DIAG.push({id:'capture',t:'Save a TP-7 recording to the phone',how:'Needs test 6 to show a level. Put the TP-7 on the recording from test 7, stopped and not armed. Capture plays it by MIDI, records what comes back over USB, and analyzes it right away. Share WAV opens the share sheet: save to Files, or share it straight into our chat.',
   acts:[['Capture',runCapture],['Share WAV',shareCapture]],
   qs:[['What did the capture contain?',['The recording','Only silence','Only my live input','Not sure']],['Did Share WAV work?',['Yes','No share sheet','Not tried']]]});
+const noteOnOff=n=>{ mNow([0x90,n,100]); setTimeout(()=>mNow([0x80,n,0]),80); };
+DIAG.push(
+ {id:'cuemx',t:'Four ways to set a marker',how:'Use a scratch recording. Start playback on the TP-7, tap A, wait a few seconds, tap B, and so on. C needs you to hold rec on the TP-7. D may record over the scratch take. Then stop the TP-7, tap Recall all and watch for jumps.',
+  acts:[['A: cue mode + note',async()=>{ mNow([0xB0,16,127]); await sleep(150); noteOnOff(60); await sleep(200); mNow([0xB0,16,0]); return 'A sent: cue mode on, note 60, cue mode off.'; }],
+        ['B: note only',async()=>{ noteOnOff(62); return 'B sent: note 62.'; }],
+        ['C: hold rec + note',async()=>{ setDs('cuemx','Hold rec on the TP-7 now. Note 64 follows in 2 s.'); await sleep(2000); noteOnOff(64); await sleep(300); return 'C sent: note 64. Let go of rec.'; }],
+        ['D: rec CC + note',async()=>{ mNow([0xB0,14,127]); await sleep(150); noteOnOff(65); await sleep(200); mNow([0xB0,14,0]); return 'D sent: rec on, note 65, rec off.'; }],
+        ['Recall all',async()=>{ for(const n of [60,62,64,65]){ setDs('cuemx',`Recall: note ${n}…`); noteOnOff(n); await sleep(2500); } return 'Recall sent notes 60, 62, 64 and 65, 2.5 s apart.'; }]],
+  qs:[['Did A leave a marker?',['Yes','No','Not sure']],['Did B?',['Yes','No','Not sure']],['Did C?',['Yes','No','Not sure']],['Did D?',['Yes','No','Not sure']],['What did Recall all do?',['Jumped on every note','Jumped on some notes','No jumps']]]},
+ {id:'looper',t:'Guitar looper',nomidi:true,how:'Close this screen. Tap the loop button in the top bar, then Measure (if it asks, play a muted strum on each click). Record a 2-bar loop over the demo, play along for a while, then come back here.',
+  acts:[],
+  qs:[['How did Measure find the latency?',['From the app’s own sound','From my strums','It failed']],['Does the loop sit in time with the drums?',['Tight','A little late','A little early','Clearly off']],['How does the loop point sound?',['Seamless','Small click','Gap']]]}
+);
 const DIAG_PLAN=[
-  ['Part 1: TP-7 MIDI mode set to cue, auto start off',['start','cueset','cuego','cuecap','loop']],
-  ['Part 2: TP-7 MIDI mode set to sync',['input2','cal','capture','restart','looprec']],
+  ['Part 1: TP-7 MIDI mode cue; auto start and count-in off',['cal','capture','cuemx']],
+  ['Part 2: the guitar looper, any MIDI mode',['looper']],
   ['Optional',['input','lock']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
@@ -1970,8 +2003,9 @@ const DIAG_PLAN=[
   H('start','Run arms, sends MIDI start 1 s later, MIDI stop 4 s after that, then disarms. This shows whether the app can still start recordings in cue mode.');
   H('cueset','Start a recording or playback on the TP-7. Run turns on cue record mode, sets 4 markers 1 s apart (notes 36 to 39), then turns it off.');
   H('cuego','Stop the TP-7 on the recording from test 2. Try each button once and watch for a jump to the second marker.');
-  H('input','Switch the TP-7 MIDI mode to ctrl. Press play and stop, and turn the wheel. Switch it back afterwards.');
-  H('cal',()=>`Uses the start method from the TP-7 tab (now: ${S.tp.startMode}) at ${S.bpm} bpm. If test 1 recorded, run this in cue mode so markers get checked too; otherwise use sync. Record plays a short rising sweep across the downbeat, then 8 bars of clicks with a marker on every bar. Measure it with test 8, or load its WAV with Analyze WAV.`);
+  H('input','Switch the TP-7 MIDI mode to ctrl. Press every button once, turn the wheel both ways and move the rocker, then switch back to cue.');
+  H('capture','Leave the TP-7 on the recording from test 1, stopped and not armed. Capture plays it by MIDI, records what comes back over USB and measures it right away. Share WAV sends the file to Files or straight into our chat.');
+  H('cal',()=>`Set the TP-7 source to digital and unplug the guitar, so it records only the app's clicks and sweep. Uses ${S.tp.startMode==='start'?'MIDI start':S.tp.startMode} at ${S.bpm} bpm. Record plays a short rising sweep across the downbeat, then 8 bars of clicks with a marker on every bar. Then run test 2 to measure it.`);
 })();
 DIAG.forEach((t,i)=>{ t.t=(i+1)+'. '+t.t.replace(/^\d+\.\s*/,''); });
 async function measureTimer(){
@@ -2118,7 +2152,9 @@ function diagReport(){
     const answered=t.qs.some((q,qi)=>D.ans[t.id+':'+qi]!=null);
     L.push(t.t+(D.ran[t.id]||answered||(t.id==='input'&&R.inCount)?'':' (not run)'));
     t.qs.forEach((q,qi)=>{ const a=D.ans[t.id+':'+qi]; L.push(`  ${q[0]} ${a==null?'-':q[1][a]}`); });
-    if(t.id==='input') L.push(`  App received ${R.inCount||0} messages${R.inLog&&R.inLog.length?': '+R.inLog.slice(-5).join(' | '):''}`);
+    if(t.id==='input'){ L.push(`  App received ${R.inCount||0} messages${R.inLog&&R.inLog.length?': '+R.inLog.slice(-5).join(' | '):''}`);
+      if(R.inMap) L.push('  Distinct: '+Object.entries(R.inMap).map(([k,e])=>`${k}${e.v.size?' ('+[...e.v].join(', ')+')':''} ×${e.n}`).join('; ')); }
+    if(t.id==='looper') L.push('  Looper latency: '+(S.looper.lat==null?'not measured':Math.round(S.looper.lat*1000)+' ms, '+S.looper.latHow));
     if(t.id==='cal'&&D.calResult) D.calResult.forEach(x=>L.push('  '+x));
     if(D.lead&&D.lead[t.id]) D.lead[t.id].forEach(x=>L.push('  Received: '+x));
     if(D.extra&&D.extra[t.id]) D.extra[t.id].forEach(x=>L.push('  '+x));
@@ -2174,6 +2210,93 @@ function bindDiag(){
   });
   root.addEventListener('input',e=>{ const t=e.target; if(t.dataset.df) S.diag[t.dataset.df]=t.value; else if(t.dataset.dn) S.diag.notes[t.dataset.dn]=t.value; else return; save(); updReport(); });
   root.addEventListener('change',e=>{ if(e.target.id==='dgFile'){ const f=e.target.files&&e.target.files[0]; if(f) analyzeCal(f); e.target.value=''; } });
+}
+
+/* guitar looper: records what the TP-7 sends over USB and loops it on the bar grid.
+   Timing: every input block is stamped with the audio clock; the measured round trip
+   (app sound out, your playing back in) is subtracted so the loop lands where you played it. */
+const LP={stream:null,sp:null,cap:null,capMax:0,rec:null,buf:null,steps:32,phase:0,bpm:0,voices:[]};
+function lpGain(){ if(!A.loopGain){ A.loopGain=ctx.createGain(); A.loopGain.gain.value=S.looper.muted?0:S.looper.level; A.loopGain.connect(A.master); } return A.loopGain; }
+function lpApply(){ if(ctx&&A.master) lpGain().gain.setTargetAtTime(S.looper.muted?0:S.looper.level,ctx.currentTime,0.02); const b=$('#loopBtn'); if(b) b.setAttribute('aria-pressed',String(!!LP.buf&&!S.looper.muted)); }
+async function lpOpenInput(){
+  if(LP.stream) return true;
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ toast('This browser offers no audio input.'); return false; }
+  try{ if(navigator.audioSession) navigator.audioSession.type='play-and-record'; }catch(e){}
+  try{ LP.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:2}}); }
+  catch(e){ try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(x){} toast('Audio input was blocked ('+e.name+').'); return false; }
+  const src=ctx.createMediaStreamSource(LP.stream), z=ctx.createGain(); z.gain.value=0; LP.sp=ctx.createScriptProcessor(2048,2,2);
+  LP.sp.onaudioprocess=e=>{ if(!LP.cap) return; const ib=e.inputBuffer, a=ib.getChannelData(0), b=ib.numberOfChannels>1?ib.getChannelData(1):a;
+    LP.cap.push({t:e.playbackTime!=null?e.playbackTime:ctx.currentTime,l:new Float32Array(a),r:new Float32Array(b)}); if(LP.cap.length>LP.capMax) LP.cap.shift(); };
+  src.connect(LP.sp); LP.sp.connect(z); z.connect(ctx.destination);
+  return true;
+}
+function lpStartCap(secs){ LP.capMax=Math.ceil(secs*ctx.sampleRate/2048)+8; LP.cap=[]; }
+// block timestamps jitter by a few render quanta, but the samples arrive without gaps:
+// average the anchor over every block instead of trusting the first one
+function lpFlat(){ const c=LP.cap||[]; if(!c.length) return null; const sr=ctx.sampleRate, n=c.reduce((a,x)=>a+x.l.length,0), l=new Float32Array(n), r=new Float32Array(n); let o=0, acc=0;
+  c.forEach(x=>{ l.set(x.l,o); r.set(x.r,o); acc+=x.t-o/sr; o+=x.l.length; }); return {t0:acc/c.length,l,r,sr}; }
+function lpSlice(f,t,dur){ const i0=Math.round((t-f.t0)*f.sr), n=Math.round(dur*f.sr); if(i0<0||i0+n>f.l.length) return null; return [f.l.slice(i0,i0+n),f.r.slice(i0,i0+n)]; }
+function lpStopVoices(t){ LP.voices.forEach(v=>{ try{ v.stop(t); }catch(e){} }); LP.voices=[]; }
+function lpPlay(t){ const s=ctx.createBufferSource(); s.buffer=LP.buf; s.connect(lpGain()); s.start(t); s.stop(t+LP.buf.duration+0.005); LP.voices.push(s); s.onended=()=>{ const i=LP.voices.indexOf(s); if(i>=0) LP.voices.splice(i,1); }; }
+function lpSay(txt){ LP.msg=txt; const e=$('#lpState'); if(e) e.textContent=txt; }
+function lpRender(){
+  const p=$('#loopPop'); if(!p) return;
+  const lat=S.looper.lat, ll=$('#lpLat'); ll.textContent=lat==null?'Latency not measured':`Latency ${Math.round(lat*1000)} ms`; ll.title=lat==null?'Measure it once before recording.':(S.looper.latHow||'measured');
+  const rb=$('#lpRecBtn'); rb.disabled=!!LP.rec; rb.textContent=LP.rec?'Recording…':LP.buf?'Record again':'Record loop';
+  lpSay(LP.rec?LP.msg:LP.buf?`${LP.steps/16} bar${LP.steps>16?'s':''} at ${LP.bpm} bpm${LP.bpm!==S.bpm?', recorded at another tempo':''}`:'No loop yet'); lpApply(); syncControls();
+}
+async function lpRecord(){
+  initAudio(); if(!ctx||LP.rec) return;
+  if(!await lpOpenInput()) return;
+  if(S.looper.lat==null) toast('Latency not measured yet, so the loop may sit slightly late. Measure it for a tight loop.');
+  const steps=S.looper.bars*16, dur=stepDur(), lat=S.looper.lat==null?0.03:S.looper.lat;
+  if(!R.playing){ play(0); await sleep(160); }
+  const target=Math.ceil((Math.max(R.absStep,0)+12)/16)*16, tStart=R.nextTime+(target-R.absStep)*dur, len=steps*dur;
+  for(let i=0;i<4;i++){ const ct=tStart-(4-i)*4*dur; if(!S.metro&&ct>ctx.currentTime+0.02) click(ct,i===0); }
+  LP.rec={target,steps,tStart,len}; lpStartCap(len+lat+ (tStart-ctx.currentTime) + 1.5); lpRender();
+  const tick=setInterval(()=>{ if(!LP.rec) return clearInterval(tick); const now=ctx.currentTime;
+    lpSay(now<tStart?`Count-in: ${Math.ceil((tStart-now)/(4*dur))}`:now<tStart+len?`Recording bar ${Math.min(S.looper.bars,Math.floor((now-tStart)/(16*dur))+1)} of ${S.looper.bars}`:'Finishing…'); },100);
+  await sleep((tStart+len+lat-ctx.currentTime)*1000+250);
+  const f=lpFlat(), seg=f&&lpSlice(f,tStart+lat,len); LP.cap=null; clearInterval(tick);
+  if(!seg||!R.playing){ LP.rec=null; lpRender(); toast(R.playing?'The recording did not come through. Check the TP-7 input.':'Playback stopped before the loop finished.'); return; }
+  const sr=ctx.sampleRate, fade=Math.round(0.004*sr), ab=ctx.createBuffer(2,seg[0].length,sr);
+  seg.forEach((ch,c)=>{ for(let i=0;i<fade;i++){ const g=i/fade; ch[i]*=g; ch[ch.length-1-i]*=g; } ab.copyToChannel(ch,c); });
+  let pk=0; for(let i=0;i<seg[0].length;i+=4) pk=Math.max(pk,Math.abs(seg[0][i]),Math.abs(seg[1][i]));
+  LP.buf=ab; LP.steps=steps; LP.phase=target%steps; LP.bpm=S.bpm; LP.rec=null;
+  // the first pass starts at the next loop boundary the scheduler has not reached yet
+  lpRender(); toast(pk<0.003?'The loop is nearly silent. Check the TP-7 input level.':`Loop recorded: ${S.looper.bars} bar${S.looper.bars>1?'s':''}. It plays whenever the transport runs.`);
+}
+function lpClear(){ lpStopVoices(ctx?ctx.currentTime:0); LP.buf=null; lpRender(); toast('Loop cleared.'); }
+async function lpMeasure(){
+  initAudio(); if(!ctx||LP.rec) return;
+  if(!await lpOpenInput()) return;
+  lpSay('Listening for the app’s own clicks…');
+  lpStartCap(4); const T0=ctx.currentTime+0.3, gap=0.45; for(let i=0;i<4;i++) calClick(T0+i*gap,false);
+  await sleep((T0+4*gap-ctx.currentTime)*1000+400);
+  let f=lpFlat(); LP.cap=null;
+  const onset=(f,t,win,thr)=>{ const i0=Math.max(0,Math.round((t-f.t0)*f.sr)), i1=Math.min(f.l.length,i0+Math.round(win*f.sr)); for(let i=i0;i<i1;i++) if(Math.max(Math.abs(f.l[i]),Math.abs(f.r[i]))>thr) return (f.t0+i/f.sr)-t; return null; };
+  const floor=f?(()=>{ let m=0; const n=Math.min(f.l.length,Math.round(0.25*f.sr)); for(let i=0;i<n;i++) m=Math.max(m,Math.abs(f.l[i])); return m; })():0;
+  let ds=f?[0,1,2,3].map(i=>onset(f,T0+i*gap,0.3,Math.max(0.02,floor*4))).filter(x=>x!=null).sort((a,b)=>a-b):[];
+  if(ds.length>=3&&ds[ds.length-1]-ds[0]<0.004){ S.looper.lat=ds[ds.length>>1]; S.looper.latHow='measured from the app’s own sound'; save(); lpRender(); toast(`Latency ${Math.round(S.looper.lat*1000)} ms.`); return; }
+  // the TP-7 does not send the app's sound back: measure from the player instead
+  lpSay('Play a short muted strum on each of the 8 clicks.');
+  await sleep(900);
+  lpStartCap(8); const T1=ctx.currentTime+1.0, g2=0.6; for(let i=0;i<8;i++) calClick(T1+i*g2,i===0);
+  await sleep((T1+8*g2-ctx.currentTime)*1000+500);
+  f=lpFlat(); LP.cap=null;
+  const fl=f?(()=>{ let m=0; const n=Math.min(f.l.length,Math.round(0.6*f.sr)); for(let i=0;i<n;i++) m=Math.max(m,Math.abs(f.l[i]),Math.abs(f.r[i])); return m; })():0;
+  ds=f?[0,1,2,3,4,5,6,7].map(i=>onset(f,T1+i*g2-0.08,0.4,Math.max(0.03,fl*3))).filter(x=>x!=null).map(x=>x-0.08).filter(x=>x>-0.05&&x<0.25).sort((a,b)=>a-b):[];
+  if(ds.length>=5){ const m=ds[ds.length>>1], sp=ds[ds.length-2]-ds[1]; S.looper.lat=Math.max(0,m); S.looper.latHow=`measured from your playing, spread ${Math.round(sp*1000)} ms`; save(); lpRender(); toast(`Latency ${Math.round(S.looper.lat*1000)} ms.`); }
+  else { lpRender(); toast('Could not hear enough strums. Turn the guitar up and try again, or set the latency by hand.'); }
+}
+function lpBuild(){
+  document.body.insertAdjacentHTML('beforeend',`<div class="pop lp-pop" id="loopPop" role="dialog" aria-label="Guitar looper" hidden>
+    <div class="lp-head"><b>Guitar loop</b><span class="lp-state" id="lpState" aria-live="polite">No loop yet</span></div>
+    ${segH('looper.bars',[[1,'1 bar'],[2,'2 bars'],[4,'4 bars']])}
+    <button type="button" class="take" id="lpRecBtn" data-act="lpRec">Record loop</button>
+    <div class="orow2">${togH('looper.muted','Mute')}<input type="range" data-k="looper.level" min="0" max="1" step="0.01" aria-label="Loop level" class="lp-level"><button type="button" class="btn" data-act="lpClear">Clear</button></div>
+    <div class="orow2"><span class="lp-lat" id="lpLat"></span><button type="button" class="btn sm" data-act="lpLat-" aria-label="Latency 5 ms shorter">−</button><button type="button" class="btn sm" data-act="lpLat+" aria-label="Latency 5 ms longer">+</button><button type="button" class="btn sm" data-act="lpMeasure">Measure</button></div>
+  </div>`);
 }
 
 /* chords editor: drag or tap chords onto the section timeline */
@@ -2377,6 +2500,12 @@ function doAct(a,el){
     case 'mRecOn': if(!midiReady()) toast('Connect MIDI first.'); midiSend([0xB0,14,127]); break;
     case 'mRecOff': if(!midiReady()) toast('Connect MIDI first.'); midiSend([0xB0,14,0]); break;
     case 'more': { const pop=$('#morePop'), open=pop.hidden; pop.hidden=!open; el.setAttribute('aria-expanded',String(open)); break; }
+    case 'loopPop': { const p=$('#loopPop'), open=p.hidden; p.hidden=!open; el.setAttribute('aria-expanded',String(open)); if(open) lpRender(); break; }
+    case 'lpRec': lpRecord(); break;
+    case 'lpClear': lpClear(); break;
+    case 'lpMeasure': lpMeasure(); break;
+    case 'lpLat-': if(S.looper.lat!=null){ S.looper.lat=Math.max(0,S.looper.lat-0.005); S.looper.latHow='adjusted by hand'; save(); lpRender(); } break;
+    case 'lpLat+': S.looper.lat=Math.min(0.5,(S.looper.lat==null?0.03:S.looper.lat)+0.005); S.looper.latHow='adjusted by hand'; save(); lpRender(); break;
     case 'mStart': if(!midiReady()) toast('Connect MIDI first.'); midiSend([0xFA]); break;
     case 'mStop': if(!midiReady()) toast('Connect MIDI first.'); midiSend([0xFC]); break;
     case 'testStart': testStart(); break;
@@ -2406,7 +2535,8 @@ function doAct(a,el){
 }
 function bindGlobal(){
   document.addEventListener('click',e=>{
-    const t=e.target, pop=$('#morePop');
+    const t=e.target, pop=$('#morePop'), lpp=$('#loopPop');
+    if(lpp&&!lpp.hidden&&!t.closest('#loopPop')&&!t.closest('#loopBtn')){ lpp.hidden=true; $('#loopBtn').setAttribute('aria-expanded','false'); }
     const av=t.closest('[data-av]'); if(av){ S.arrView=av.dataset.av; save(); showTab('arrange'); return; }
     const ct=t.closest('.ctile'); if(ct){ const i=+ct.dataset.ci; R.chainSel=R.chainSel===i?null:i; renderChain(); return; }
     if(t.closest('.tapout')){ if(e.detail===0) tapTempo(); return; }
@@ -2531,7 +2661,7 @@ if(!['loop','jam','song'].includes(S.tp.takeMode)) S.tp.takeMode='loop';
 if(!Array.isArray(S.takes)) S.takes=[]; S.diag=Object.assign(defaults().diag,S.diag||{}); ['ans','notes','ran'].forEach(k=>{ if(!S.diag[k]||typeof S.diag[k]!=='object') S.diag[k]={}; }); if(!S.tp.startMode) S.tp.startMode='arm'; if(!S.tp.mig2){ if(S.tp.startMode==='start') S.tp.startMode='arm'; S.tp.clock=false; S.tp.mig2=true; } if(!S.tp.mig3){ if(['arm','beep','rocker'].includes(S.tp.startMode)) S.tp.startMode='start'; S.tp.clock=true; S.tp.mig3=true; }
 if(!S.tp.mig4){ S.tp.clock=false; S.tp.mig4=true; }
 if(S.tp.clock==null) S.tp.clock=false; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
-buildPanels(); bindStick(); bindKeys(); bindChords(); bindReview(); bindDiag(); bindGlobal();
+buildPanels(); lpBuild(); bindStick(); bindKeys(); bindChords(); bindReview(); bindDiag(); bindGlobal();
 R.tab='play'; R.shown=new Set(['play']); renderAll(); showTab('play'); requestAnimationFrame(frame);
 if(matchMedia('(orientation: portrait)').matches&&Math.min(innerWidth,innerHeight)<520) setTimeout(()=>toast('Tip: turn your phone sideways for the full layout.'),1800);
 </script>
