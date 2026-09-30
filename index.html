@@ -561,7 +561,7 @@ function defaults(){
     sections:['Verse','Chorus','Bridge','Outro'].map(name=>({name,bars:4,chords:[],drums:pat6('empty')})),
     songMode:false,chain:[{sec:0,rep:2},{sec:1,rep:2},{sec:0,rep:1},{sec:2,rep:1},{sec:1,rep:2}],songEnd:'stop',switchAt:'loop',autoFill:true,
     edLen:16,edSnap:4,
-    tp:{split:0,preroll:2,slate:true,tail:4,midiCue:true,midiRec:false,midiLoop:-1,takeMode:'loop',takeReps:4,countIn:true,chk:{},cueEvery:1,startMode:'start',clock:true,midiOffset:0,mig2:true},
+    tp:{split:0,preroll:2,slate:true,tail:4,midiCue:true,midiRec:false,midiLoop:-1,takeMode:'loop',takeReps:4,countIn:true,chk:{},cueEvery:1,startMode:'start',clock:false,midiOffset:0,mig2:true},
     takes:[],takeN:0,
     diag:{fw:'',set:'',rec:'',ans:{},notes:{},ran:{},cal:null,calResult:null,calSug:null}
   };
@@ -1491,7 +1491,7 @@ function renderTpInfo(){
     :sm==='beep'?'Arms the TP-7 with CC 14. The start beep then triggers its auto start record, so turn that on in the TP-7 record settings, set to start only.'
     :sm==='rocker'?'Arms the TP-7 with CC 14, then pushes its tape rocker forward with CC 18 on the downbeat, and back to stop after the tail.'
     :'You press record on the TP-7 during the pre-roll.')+(sm==='start'?' Your TP-7 recorded with this method in the diagnostics.':'');
-  $('#clockNote').textContent=S.tp.clock?`Sends ${S.bpm} bpm as MIDI clock. Your TP-7 does not change its tempo from it, but MIDI start was tested with the clock running, so keep it on until diagnostics test 25 shows it is not needed.`:'MIDI clock is off. If MIDI start stops working, turn it back on.';
+  $('#clockNote').textContent=S.tp.clock?`Sends ${S.bpm} bpm as MIDI clock. Your TP-7 does not follow it and records without it, so you can leave this off.`:'MIDI clock is off. Your TP-7 records from MIDI start without it and ignores it for tempo.';
   $('#offOut').textContent=(S.tp.midiOffset>0?'+':'')+S.tp.midiOffset+' ms';
   renderChk();
 }
@@ -1861,6 +1861,57 @@ DIAG.push(
   acts:[['Run',async()=>{ R.clockMute=true; await sleep(300); mNow([0xB0,14,127]); await sleep(1000); mNow([0xFA]); await sleep(4000); mNow([0xFC]); await sleep(300); mNow([0xB0,14,0]); R.clockMute=false; return 'Sent arm, start, stop, disarm with the clock muted.'; }]],
   qs:[['What happened?',REC_OPTS]]}
 );
+/* round 4: can a short guitar loop be recorded and looped? */
+function dgExtra(id,lines){ (S.diag.extra=S.diag.extra||{})[id]=lines; save(); }
+async function runInputCheck(){
+  initAudio();
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ dgExtra('input2',['No microphone access in this browser.']); return 'This browser offers no microphone access.'; }
+  try{ if(navigator.audioSession) navigator.audioSession.type='play-and-record'; }catch(e){}
+  let st;
+  try{ st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); }
+  catch(e){ try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(x){} dgExtra('input2',['Microphone access failed: '+e.name]); return 'Microphone access failed: '+e.name+'.'; }
+  const tr=st.getAudioTracks()[0], set=tr&&tr.getSettings?tr.getSettings():{};
+  const src=ctx.createMediaStreamSource(st), an=ctx.createAnalyser(); an.fftSize=2048; src.connect(an);
+  const buf=new Float32Array(2048), db=v=>v>0?(20*Math.log10(v)).toFixed(0):'-inf'; let peak=0; const t0=performance.now();
+  while(performance.now()-t0<10000){
+    an.getFloatTimeDomainData(buf); let m=0; for(let i=0;i<buf.length;i++){ const a=Math.abs(buf[i]); if(a>m) m=a; }
+    peak=Math.max(peak,m); setDs('input2',`Listening for ${Math.ceil((10000-(performance.now()-t0))/1000)} s. Level ${db(m)} dBFS, peak ${db(peak)} dBFS.`); await sleep(120);
+  }
+  st.getTracks().forEach(t=>t.stop()); src.disconnect();
+  try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){}
+  const info=`Input device: ${tr&&tr.label||'unnamed'}; channels ${set.channelCount||'?'}; ${set.sampleRate||'?'} Hz; input latency ${set.latency!=null?(set.latency*1000).toFixed(1)+' ms':'not reported'}; peak ${db(peak)} dBFS`;
+  dgExtra('input2',[info]); return info;
+}
+async function runLoopRec(){
+  initAudio(); if(!ctx) return 'Audio did not start.';
+  const bpm=S.bpm, beat=60/bpm, bar=4*beat, bars=2, len=bars*bar;
+  mNow([0xB0,14,127]);
+  const D=ctx.currentTime+bar+0.3;
+  for(let i=0;i<4;i++) calClick(D-bar+i*beat,i===0);
+  midiSend([0xFA],D);
+  for(let i=0;i<bars*4;i++) calClick(D+i*beat,i%4===0);
+  const E=D+len; midiSend([0xFC],E); midiSend([0xB0,14,0],E+0.03);
+  const P=D+Math.ceil((len+1.0)/bar)*bar;
+  for(let k=0;k<4;k++){ midiSend([0xFA],P+k*len); for(let i=0;i<bars*4;i++) calClick(P+k*len+i*beat,i%4===0); }
+  midiSend([0xFC],P+4*len);
+  setDs('looprec',`Count-in, then recording ${bars} bars at ${bpm} bpm. Play now.`);
+  await sleep((E-ctx.currentTime)*1000+100);
+  setDs('looprec','Stopped. Looping the new recording 4 times, with the app clicking along.');
+  await sleep((P+4*len-ctx.currentTime)*1000+200);
+  dgExtra('looprec',[`Recorded ${bars} bars at ${bpm} bpm (${len.toFixed(3)} s), then restarted playback 4 times, every ${len.toFixed(3)} s.`]);
+  return 'Done.';
+}
+DIAG.push(
+ {id:'input2',t:'Guitar into the app through the TP-7',nomidi:true,how:'Plug the guitar into the TP-7 line input. Run asks for microphone access, then shows the level for 10 s while you play. Allow access if MIDIWeb asks.',
+  acts:[['Run',runInputCheck]],
+  qs:[['Did the level move when you played?',['Yes','No','Access was blocked']],["Did the app's sound keep coming out of the TP-7 afterwards?",['Yes','Moved to the phone speaker','Stopped']]]},
+ {id:'restart',t:'Restart playback by MIDI',how:'MIDI mode sync. Load a recording of a few seconds, stopped and not armed. Run sends MIDI start five times, 2 s apart, then MIDI stop.',
+  acts:[['Run',async()=>{ mNow([0xFA]); for(let k=0;k<4;k++){ await sleep(2000); mNow([0xFA]); } await sleep(2000); mNow([0xFC]); return 'Sent start five times, 2 s apart, then stop.'; }]],
+  qs:[['What did each new start do?',['Jumped back to the beginning','Kept playing','Stopped','Something else']],['How did each restart sound?',['Seamless','Short gap','Glitch or tape sound']]]},
+ {id:'looprec',t:'Record 2 bars, then loop them',how:'MIDI mode sync, auto start off, source set so the line input is recorded. Run plays a 1-bar count-in, records 2 bars at the project tempo while clicking, stops, then restarts the new recording 4 times while clicking along. Play guitar during the 2 recorded bars. Recorded clicks and new clicks should land together.',
+  acts:[['Run',runLoopRec]],
+  qs:[['Did it record exactly 2 bars?',['Yes','Too long','Too short','Did not record']],['Did the loop stay in time with the new clicks?',['Yes, tight','Close, with a flam or gap','No']]]}
+);
 DIAG.forEach((t,i)=>{ t.t=(i+1)+'. '+t.t.replace(/^\d+\.\s*/,''); });
 async function measureTimer(){
   const n=60, late=[];
@@ -1972,6 +2023,7 @@ function diagReport(){
     if(t.id==='input') L.push(`  App received ${R.inCount||0} messages${R.inLog&&R.inLog.length?': '+R.inLog.slice(-5).join(' | '):''}`);
     if(t.id==='cal'&&D.calResult) D.calResult.forEach(x=>L.push('  '+x));
     if(D.lead&&D.lead[t.id]) D.lead[t.id].forEach(x=>L.push('  Received: '+x));
+    if(D.extra&&D.extra[t.id]) D.extra[t.id].forEach(x=>L.push('  '+x));
     if(D.notes[t.id]) L.push('  Note: '+D.notes[t.id]);
   });
   return L.join('\n');
@@ -2377,7 +2429,8 @@ S=load(); if(!S){ S=defaults(); seedDemo(); }
 if(S.tp.takeMode==='section') S.tp.takeMode='loop';
 if(!['loop','jam','song'].includes(S.tp.takeMode)) S.tp.takeMode='loop';
 if(!Array.isArray(S.takes)) S.takes=[]; S.diag=Object.assign(defaults().diag,S.diag||{}); ['ans','notes','ran'].forEach(k=>{ if(!S.diag[k]||typeof S.diag[k]!=='object') S.diag[k]={}; }); if(!S.tp.startMode) S.tp.startMode='arm'; if(!S.tp.mig2){ if(S.tp.startMode==='start') S.tp.startMode='arm'; S.tp.clock=false; S.tp.mig2=true; } if(!S.tp.mig3){ if(['arm','beep','rocker'].includes(S.tp.startMode)) S.tp.startMode='start'; S.tp.clock=true; S.tp.mig3=true; }
-if(S.tp.clock==null) S.tp.clock=true; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
+if(!S.tp.mig4){ S.tp.clock=false; S.tp.mig4=true; }
+if(S.tp.clock==null) S.tp.clock=false; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
 buildPanels(); bindStick(); bindKeys(); bindChords(); bindReview(); bindDiag(); bindGlobal();
 R.tab='play'; R.shown=new Set(['play']); renderAll(); showTab('play'); requestAnimationFrame(frame);
 if(matchMedia('(orientation: portrait)').matches&&Math.min(innerWidth,innerHeight)<520) setTimeout(()=>toast('Tip: turn your phone sideways for the full layout.'),1800);
