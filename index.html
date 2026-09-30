@@ -1992,10 +1992,52 @@ DIAG.push(
   acts:[],
   qs:[['How did Measure find the latency?',['From the app’s own sound','From my strums','It failed']],['Does the loop sit in time with the drums?',['Tight','A little late','A little early','Clearly off']],['How does the loop point sound?',['Seamless','Small click','Gap']]]}
 );
+/* round 7: do MIDI notes reach the TP-7 at all? */
+const noteLabel=n=>`${n} (${NOTE[n%12]}${Math.floor(n/12)-1})`;
+function tpOut(){ return R.midi&&R.midi.outputs.get(R.midiOutId); }
+function sendAll(o,st,d1,d2){ for(let ch=0;ch<16;ch++){ try{ o.send([st|ch,d1,d2]); }catch(e){} } }
+async function runLoopback(){
+  if(!R.midi) return 'Connect MIDI first.';
+  let o=null; for(const x of R.midi.outputs.values()) if(/midiweb\s*in/i.test(x.name||'')) o=x;
+  if(!o) return 'No MIDIWeb In port found, so this check cannot run.';
+  const got=capture('loopb',1600); await sleep(150);
+  const msgs=[[0x90,60,100],[0x80,60,0],[0xB0,17,1],[0x91,61,90],[0x91,61,0]];
+  for(const m of msgs){ try{ o.send(m); }catch(e){} await sleep(120); }
+  const list=await got, hex=d=>d.map(x=>x.toString(16).padStart(2,'0')).join(' ');
+  const back=list.filter(m=>!/tp.?7/i.test(m.port)&&m.d[0]!==0xF8).map(m=>`${m.port}: ${hex(m.d)}`);
+  const lines=[`Sent to ${o.name}: ${msgs.map(hex).join(', ')}.`,back.length?'Came back: '+back.join(' | '):'Nothing came back on any input.'];
+  dgExtra('loopb',lines); return lines.join(' ');
+}
+async function runSweep(){
+  const o=tpOut(); if(!o) return 'Connect MIDI first.';
+  R.sweepStop=false; R.sweepLog=[]; R.sweepNote=null;
+  for(let n=0;n<128&&!R.sweepStop;n++){
+    R.sweepNote=n; setDs('sweep',`Note ${noteLabel(n)} on all 16 channels. Tap It jumped the moment the TP-7 jumps or starts playing.`);
+    sendAll(o,0x90,n,100); await sleep(120); sendAll(o,0x80,n,0); await sleep(330);
+  }
+  const res=(R.sweepLog.length?'Jumps reported at: '+R.sweepLog.join('; ')+'.':'No jumps reported.')+(R.sweepStop?' Stopped early at note '+R.sweepNote+'.':'');
+  R.sweepNote=null; dgExtra('sweep',[res]); return res;
+}
+DIAG.push(
+ {id:'loopb',t:'Does MIDIWeb pass notes?',how:'No TP-7 action needed. Run sends two notes and a control change into MIDIWeb In, its own virtual port, and listens on every input. If the notes come back unchanged, MIDIWeb handles notes correctly.',
+  acts:[['Run',runLoopback]],
+  qs:[]},
+ {id:'sweep',t:'Note sweep against cues you set by hand',how:'TP-7 in cue mode. Set 2 or 3 cues by hand (hold record, press +), then stop the TP-7 at the start of the recording. Run sends every note from 0 to 127 on all 16 channels, about two per second, which takes about a minute. Tap It jumped as soon as the TP-7 jumps or starts playing.',
+  acts:[['Run',runSweep],['It jumped',async()=>{ const n=R.sweepNote; if(n==null) return 'Start the sweep first.'; R.sweepLog.push(`note ${noteLabel(n)}${n>0?' or '+(n-1):''}`); return `Logged a jump near note ${n}. The sweep continues.`; }],['Stop',async()=>{ R.sweepStop=true; return 'Stopping…'; }]],
+  qs:[['Did the TP-7 jump or start playing at any point?',['Yes, I logged it','No','Not sure']]]},
+ {id:'cuevar',t:'Four more ways to set a cue',how:'TP-7 in cue mode, on a scratch recording, playing. Tap V1, wait a few seconds, tap V2, and so on. V3 and V4 need you to hold record. After each one, check with + and − for a new cue. Then stop and tap Recall.',
+  acts:[
+   ['V1: CC 16 + long note',async()=>{ mNow([0xB0,16,127]); await sleep(200); mNow([0x90,72,100]); await sleep(500); mNow([0x80,72,0]); await sleep(200); mNow([0xB0,16,0]); return 'V1 sent: cue record mode on, note 72 held for 0.5 s, cue record mode off.'; }],
+   ['V2: all channels',async()=>{ const o=tpOut(); if(!o) return 'Connect MIDI first.'; sendAll(o,0xB0,16,127); await sleep(200); sendAll(o,0x90,74,100); await sleep(500); sendAll(o,0x80,74,0); await sleep(200); sendAll(o,0xB0,16,0); return 'V2 sent: the same as V1 with note 74, on all 16 channels.'; }],
+   ['V3: hold record',async()=>{ const o=tpOut(); if(!o) return 'Connect MIDI first.'; setDs('cuevar','Hold record on the TP-7 now. Note 76 follows in 2 s.'); await sleep(2000); sendAll(o,0x90,76,100); await sleep(500); sendAll(o,0x80,76,0); await sleep(300); return 'V3 sent: note 76 on all channels. Let go of record.'; }],
+   ['V4: hold record, other note off',async()=>{ setDs('cuevar','Hold record on the TP-7 now. Note 77 follows in 2 s.'); await sleep(2000); mNow([0x90,77,127]); await sleep(500); mNow([0x90,77,0]); await sleep(300); return 'V4 sent: note 77, ended with a zero-velocity note on. Let go of record.'; }],
+   ['Recall',async()=>{ const o=tpOut(); if(!o) return 'Connect MIDI first.'; for(const n of [72,74,76,77]){ setDs('cuevar',`Recall: note ${n} on all channels…`); sendAll(o,0x90,n,100); await sleep(150); sendAll(o,0x80,n,0); await sleep(2400); } return 'Recall sent notes 72, 74, 76 and 77 on all channels.'; }]],
+  qs:[['Which one added a cue?',['V1','V2','V3','V4','More than one','None']],['Did Recall make it jump?',['Yes','No']]]}
+);
 const DIAG_PLAN=[
-  ['Part 1: TP-7 MIDI mode cue; auto start and count-in off',['cal','capture','cuemx']],
-  ['Part 2: the guitar looper, any MIDI mode',['looper']],
-  ['Optional',['input','lock']]
+  ['Part 1: do MIDI notes reach the TP-7? TP-7 in cue mode, MIDI mode cue',['loopb','sweep','cuevar']],
+  ['Part 2: timing. TP-7 in its normal mode (cue mode cannot record), source set the way you record takes',['cal','capture']],
+  ['Part 3: the guitar looper',['looper']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -2004,8 +2046,8 @@ const DIAG_PLAN=[
   H('cueset','Start a recording or playback on the TP-7. Run turns on cue record mode, sets 4 markers 1 s apart (notes 36 to 39), then turns it off.');
   H('cuego','Stop the TP-7 on the recording from test 2. Try each button once and watch for a jump to the second marker.');
   H('input','Switch the TP-7 MIDI mode to ctrl. Press every button once, turn the wheel both ways and move the rocker, then switch back to cue.');
-  H('capture','Leave the TP-7 on the recording from test 1, stopped and not armed. Capture plays it by MIDI, records what comes back over USB and measures it right away. Share WAV sends the file to Files or straight into our chat.');
-  H('cal',()=>`Set the TP-7 source to digital and unplug the guitar, so it records only the app's clicks and sweep. Uses ${S.tp.startMode==='start'?'MIDI start':S.tp.startMode} at ${S.bpm} bpm. Record plays a short rising sweep across the downbeat, then 8 bars of clicks with a marker on every bar. Then run test 2 to measure it.`);
+  H('capture','Leave the TP-7 on the recording from test 4, stopped and not armed. Capture plays it by MIDI, records what comes back over USB and measures it right away. Then tap Share WAV and send the file into our chat.');
+  H('cal',()=>`Keep the TP-7 source set the way you record takes, as long as it records the USB input, and mute the guitar. Uses ${S.tp.startMode==='start'?'MIDI start':S.tp.startMode} at ${S.bpm} bpm with your ${S.tp.midiOffset} ms offset. Record plays a short rising sweep across the downbeat, then 8 bars of clicks. Then run test 5 to measure it.`);
 })();
 DIAG.forEach((t,i)=>{ t.t=(i+1)+'. '+t.t.replace(/^\d+\.\s*/,''); });
 async function measureTimer(){
