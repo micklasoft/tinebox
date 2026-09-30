@@ -2034,9 +2034,45 @@ DIAG.push(
    ['Recall',async()=>{ const o=tpOut(); if(!o) return 'Connect MIDI first.'; for(const n of [72,74,76,77]){ setDs('cuevar',`Recall: note ${n} on all channels…`); sendAll(o,0x90,n,100); await sleep(150); sendAll(o,0x80,n,0); await sleep(2400); } return 'Recall sent notes 72, 74, 76 and 77 on all channels.'; }]],
   qs:[['Which one added a cue?',['V1','V2','V3','V4','More than one','None']],['Did Recall make it jump?',['Yes','No']]]}
 );
+/* round 8: which channel does the TP-7 listen on, and how do recalls behave? */
+async function runChFind(){
+  const o=tpOut(); if(!o) return 'Connect MIDI first.';
+  R.chStop=false; R.chLog=[]; R.chNow=null;
+  setDs('chfind','Hold record on the TP-7 now and keep holding. Starting in 2 s…'); await sleep(2000);
+  for(let ch=0;ch<16&&!R.chStop;ch++){
+    R.chNow=ch; setDs('chfind',`Keep holding record. Channel ${ch+1}, note ${60+ch}. Tap Cue appeared the moment a cue is added.`);
+    try{ o.send([0x90|ch,60+ch,100]); }catch(e){} await sleep(500); try{ o.send([0x80|ch,60+ch,0]); }catch(e){} await sleep(700);
+  }
+  const res=(R.chLog.length?'Cue appeared at: '+R.chLog.join('; ')+'.':'No cue reported.')+(R.chStop?' Stopped early.':'');
+  R.chNow=null; dgExtra('chfind',[res]); return res+' You can let go of record.';
+}
+async function runRecall2(){
+  const o=tpOut(); if(!o) return 'Connect MIDI first.';
+  R.rcStop=false; R.rcLog=[]; R.rcNow=null;
+  for(let ch=0;ch<16&&!R.rcStop;ch++){
+    R.rcNow=ch; setDs('recall2',`Channel ${ch+1}, note ${60+ch}, held for 2 s. Tap It jumped if the TP-7 jumps or plays.`);
+    try{ o.send([0x90|ch,60+ch,100]); }catch(e){} await sleep(2000); try{ o.send([0x80|ch,60+ch,0]); }catch(e){} await sleep(600);
+  }
+  const res=(R.rcLog.length?'Jumps reported at: '+R.rcLog.join('; ')+'.':'No jumps reported.')+(R.rcStop?' Stopped early.':'');
+  R.rcNow=null; dgExtra('recall2',[res]); return res;
+}
+DIAG.push(
+ {id:'chfind',t:'Which channel sets a cue?',how:'TP-7 in cue mode, on a scratch recording, playing. Run gives you 2 s to press and hold record, then sends one note per channel, channels 1 to 16, about one per second. Keep holding record for all 20 s and tap Cue appeared the moment the TP-7 adds a cue.',
+  acts:[['Run',runChFind],['Cue appeared',async()=>{ const c=R.chNow; if(c==null) return 'Start the run first.'; R.chLog.push(`channel ${c+1}${c>0?' or '+c:''}`); R.cueCh=c; save(); return `Logged channel ${c+1}. The run continues.`; }],['Stop',async()=>{ R.chStop=true; return 'Stopping…'; }]],
+  qs:[['How many cues were added in total?',['None','1','2 or 3','More']]]},
+ {id:'recall2',t:'Recall with held notes',how:'Optional, and the only test that needs MIDI mode cue: set it for this test only (the TP-7 buttons lock), then switch back to sync. Keep the recording and its cues from test 1, stopped, record not held. Run sends the same notes on the same channels, each held for 2 s like a keyboard key. Tap It jumped if the TP-7 jumps or plays.',
+  acts:[['Run',runRecall2],['It jumped',async()=>{ const c=R.rcNow; if(c==null) return 'Start the run first.'; R.rcLog.push(`channel ${c+1}, note ${60+c}`); return `Logged channel ${c+1}. The run continues.`; }],['Stop',async()=>{ R.rcStop=true; return 'Stopping…'; }]],
+  qs:[['What happened on a jump?',['Played while the note was held, then stopped','Kept playing after the note ended','Only moved, no playback','No jumps']]]},
+ {id:'autocue',t:'Cue without holding record',how:'TP-7 in cue mode, playing, record not held. Uses the channel you logged in test 1, or all channels if none was logged. Run sends cue record mode on, a note held for 0.5 s, then cue record mode off.',
+  acts:[['Run',async()=>{ const o=tpOut(); if(!o) return 'Connect MIDI first.'; const ch=R.cueCh; sendAll(o,0xB0,16,127); await sleep(200);
+    if(ch!=null){ try{ o.send([0x90|ch,84,100]); }catch(e){} } else sendAll(o,0x90,84,100); await sleep(500);
+    if(ch!=null){ try{ o.send([0x80|ch,84,0]); }catch(e){} } else sendAll(o,0x80,84,0); await sleep(200); sendAll(o,0xB0,16,0);
+    return `Sent cue record mode on, note 84 on ${ch!=null?'channel '+(ch+1):'all channels'}, cue record mode off.`; }]],
+  qs:[['Did it add a cue?',['Yes','No']]]}
+);
 const DIAG_PLAN=[
-  ['Part 1: do MIDI notes reach the TP-7? TP-7 in cue mode, MIDI mode cue',['loopb','sweep','cuevar']],
-  ['Part 2: timing. TP-7 in its normal mode (cue mode cannot record), source set the way you record takes',['cal','capture']],
+  ['Part 1: cues. TP-7 in cue mode (MODE button), MIDI mode left on sync',['chfind','autocue','recall2']],
+  ['Part 2: timing. Switch the TP-7 back to its normal mode for both tests',['cal','capture']],
   ['Part 3: the guitar looper',['looper']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
