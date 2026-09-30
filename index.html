@@ -1861,6 +1861,50 @@ DIAG.push(
   acts:[['Run',async()=>{ R.clockMute=true; await sleep(300); mNow([0xB0,14,127]); await sleep(1000); mNow([0xFA]); await sleep(4000); mNow([0xFC]); await sleep(300); mNow([0xB0,14,0]); R.clockMute=false; return 'Sent arm, start, stop, disarm with the clock muted.'; }]],
   qs:[['What happened?',REC_OPTS]]}
 );
+/* capture: play a TP-7 recording by MIDI and record what comes back over USB */
+function encodeWav(chs,sr){
+  const n=chs[0].length, c=chs.length, buf=new ArrayBuffer(44+n*c*2), dv=new DataView(buf), w=(o,t)=>{ for(let i=0;i<t.length;i++) dv.setUint8(o+i,t.charCodeAt(i)); };
+  w(0,'RIFF'); dv.setUint32(4,36+n*c*2,true); w(8,'WAVE'); w(12,'fmt '); dv.setUint32(16,16,true); dv.setUint16(20,1,true); dv.setUint16(22,c,true);
+  dv.setUint32(24,sr,true); dv.setUint32(28,sr*c*2,true); dv.setUint16(32,c*2,true); dv.setUint16(34,16,true); w(36,'data'); dv.setUint32(40,n*c*2,true);
+  let o=44; for(let i=0;i<n;i++) for(let k=0;k<c;k++){ const v=Math.max(-1,Math.min(1,chs[k][i])); dv.setInt16(o,v<0?v*0x8000:v*0x7fff,true); o+=2; }
+  return new Blob([buf],{type:'audio/wav'});
+}
+async function runCapture(){
+  initAudio(); if(R.playing||R.take) return 'Stop playback first.';
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia) return 'This browser offers no microphone access, so it cannot capture.';
+  const cal=S.diag.cal, secs=cal?8*4*60/cal.bpm+3:20, sr=ctx.sampleRate;
+  const back=()=>{ try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(e){} };
+  try{ if(navigator.audioSession) navigator.audioSession.type='play-and-record'; }catch(e){}
+  let st; try{ st=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:2}}); }
+  catch(e){ back(); return 'Microphone access failed: '+e.name+'.'; }
+  const src=ctx.createMediaStreamSource(st), sp=ctx.createScriptProcessor(4096,2,2), z=ctx.createGain(); z.gain.value=0;
+  const cl=[],cr=[]; let n=0; const max=Math.ceil((secs+1)*sr);
+  sp.onaudioprocess=e=>{ if(n>=max) return; const a=e.inputBuffer.getChannelData(0), b=e.inputBuffer.numberOfChannels>1?e.inputBuffer.getChannelData(1):a; cl.push(new Float32Array(a)); cr.push(new Float32Array(b)); n+=a.length; };
+  src.connect(sp); sp.connect(z); z.connect(ctx.destination);
+  await sleep(500); mNow([0xFA]); setDs('capture',`Capturing ${Math.round(secs)} s of TP-7 playback…`);
+  await sleep(secs*1000); mNow([0xFC]); await sleep(300);
+  src.disconnect(); sp.disconnect(); z.disconnect(); st.getTracks().forEach(t=>t.stop()); back();
+  const len=cl.reduce((a,x)=>a+x.length,0); if(!len) return 'Nothing was captured.';
+  const l=new Float32Array(len), r=new Float32Array(len); let o=0; for(let i=0;i<cl.length;i++){ l.set(cl[i],o); r.set(cr[i],o); o+=cl[i].length; }
+  let on=0; while(on<len&&Math.max(Math.abs(l[on]),Math.abs(r[on]))<0.01) on++;
+  let pk=0; for(let i=0;i<len;i+=2){ const a=Math.max(Math.abs(l[i]),Math.abs(r[i])); if(a>pk) pk=a; }
+  R.capWav=encodeWav([l,r],sr); R.capName='tp7-capture-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.wav';
+  const info=`Captured ${(len/sr).toFixed(1)} s, peak ${(20*Math.log10(pk||1e-9)).toFixed(1)} dBFS, sound began ${on<len?(on/sr).toFixed(3)+' s in':'nowhere'}.`;
+  dgExtra('capture',[info]);
+  if(on<len&&pk>0.01){ const ab=ctx.createBuffer(2,len-on,sr); ab.copyToChannel(l.subarray(on),0); ab.copyToChannel(r.subarray(on),1); analyzeAB(ab,{captured:true,w:null}); }
+  return info+' Tap Share WAV to save it or send it.';
+}
+async function shareCapture(){
+  if(!R.capWav) return 'Capture something first.';
+  const file=new File([R.capWav],R.capName,{type:'audio/wav'});
+  if(navigator.canShare&&navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file],title:R.capName}); return 'Shared.'; }
+    catch(e){ if(e.name==='AbortError') return 'Share cancelled.'; }
+  }
+  try{ const u=URL.createObjectURL(file), a=document.createElement('a'); a.href=u; a.download=R.capName; document.body.appendChild(a); a.click(); setTimeout(()=>{ URL.revokeObjectURL(u); a.remove(); },5000); return 'This browser has no share sheet, so the app started a download instead. If nothing happened, it cannot save files.'; }
+  catch(e){ return 'This browser cannot save files.'; }
+}
+
 /* round 4: can a short guitar loop be recorded and looped? */
 function dgExtra(id,lines){ (S.diag.extra=S.diag.extra||{})[id]=lines; save(); }
 async function runInputCheck(){
@@ -1912,6 +1956,23 @@ DIAG.push(
   acts:[['Run',runLoopRec]],
   qs:[['Did it record exactly 2 bars?',['Yes','Too long','Too short','Did not record']],['Did the loop stay in time with the new clicks?',['Yes, tight','Close, with a flam or gap','No']]]}
 );
+DIAG.push({id:'capture',t:'Save a TP-7 recording to the phone',how:'Needs test 6 to show a level. Put the TP-7 on the recording from test 7, stopped and not armed. Capture plays it by MIDI, records what comes back over USB, and analyzes it right away. Share WAV opens the share sheet: save to Files, or share it straight into our chat.',
+  acts:[['Capture',runCapture],['Share WAV',shareCapture]],
+  qs:[['What did the capture contain?',['The recording','Only silence','Only my live input','Not sure']],['Did Share WAV work?',['Yes','No share sheet','Not tried']]]});
+const DIAG_PLAN=[
+  ['Part 1: TP-7 MIDI mode set to cue, auto start off',['start','cueset','cuego','cuecap','loop']],
+  ['Part 2: TP-7 MIDI mode set to sync',['input2','cal','capture','restart','looprec']],
+  ['Optional',['input','lock']]
+];
+(()=>{ const all=DIAG.slice(); DIAG.length=0;
+  DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
+  const H=(id,how)=>{ const t=DIAG.find(x=>x.id===id); if(t) t.how=how; };
+  H('start','Run arms, sends MIDI start 1 s later, MIDI stop 4 s after that, then disarms. This shows whether the app can still start recordings in cue mode.');
+  H('cueset','Start a recording or playback on the TP-7. Run turns on cue record mode, sets 4 markers 1 s apart (notes 36 to 39), then turns it off.');
+  H('cuego','Stop the TP-7 on the recording from test 2. Try each button once and watch for a jump to the second marker.');
+  H('input','Switch the TP-7 MIDI mode to ctrl. Press play and stop, and turn the wheel. Switch it back afterwards.');
+  H('cal',()=>`Uses the start method from the TP-7 tab (now: ${S.tp.startMode}) at ${S.bpm} bpm. If test 1 recorded, run this in cue mode so markers get checked too; otherwise use sync. Record plays a short rising sweep across the downbeat, then 8 bars of clicks with a marker on every bar. Measure it with test 8, or load its WAV with Analyze WAV.`);
+})();
 DIAG.forEach((t,i)=>{ t.t=(i+1)+'. '+t.t.replace(/^\d+\.\s*/,''); });
 async function measureTimer(){
   const n=60, late=[];
@@ -1928,13 +1989,16 @@ async function runCal(){
   if(m==='start') midiSend([0xFA],D); else if(m==='rocker') midiSend([0xB0,18,68],D);
   if(m==='arm') setDs('cal','Armed. Start recording on the TP-7 now, before the clicks begin.');
   if(cue) for(let b=0;b<8;b++) midiSend([0x90,36+b,100],D+b*bar);
+  const CH={t0:-0.3,dur:0.6,f0:300,f1:3300}, so=ctx.createOscillator(), sg=ctx.createGain(), s0=D+CH.t0;
+  so.frequency.setValueAtTime(CH.f0,s0); so.frequency.linearRampToValueAtTime(CH.f1,s0+CH.dur);
+  sg.gain.setValueAtTime(0.18,s0); sg.gain.setValueAtTime(0,s0+CH.dur); so.connect(sg); sg.connect(A.fixed); so.start(s0); so.stop(s0+CH.dur+0.01);
   for(let i=0;i<32;i++) calClick(D+i*beat,i%4===0);
   if(m==='start'||m==='arm') midiSend([0xFC],E); else if(m==='rocker') midiSend([0xB0,18,64],E);
   if(cue) midiSend([0xB0,16,0],E+0.05); midiSend([0xB0,14,0],E+0.1);
-  S.diag.cal={at:Date.now(),bpm,mode:m,cue,off:S.tp.midiOffset}; save();
+  S.diag.cal={at:Date.now(),bpm,mode:m,cue,off:S.tp.midiOffset,chirp:CH}; save();
   if(m!=='arm') setDs('cal',`Recording 8 bars at ${bpm} bpm…`);
   await sleep((E-ctx.currentTime)*1000+400);
-  return `Done: 8 bars at ${bpm} bpm, started by ${m}. Copy the recording as a WAV, then tap Analyze WAV.`;
+  return `Done: 8 bars at ${bpm} bpm, started by ${m}. Now capture it with test 8, or load its WAV with Analyze WAV.`;
 }
 function parseWav(buf){
   const dv=new DataView(buf), id=o=>String.fromCharCode(dv.getUint8(o),dv.getUint8(o+1),dv.getUint8(o+2),dv.getUint8(o+3));
@@ -1968,16 +2032,40 @@ function detectClicks(ab){
   }
   return {ev,peak};
 }
+/* where a recording starts, read from the sweep: the sweep's pitch at the first sound tells the time */
+function chirpStart(x,sr,ch){
+  let on=0; while(on<x.length&&Math.abs(x[on])<0.01) on++;
+  const N=Math.round(sr*0.06); if(on+N>x.length) return null;
+  const k=(ch.f1-ch.f0)/ch.dur, ph=t=>2*Math.PI*(ch.f0*t+0.5*k*t*t), seg=x.subarray(on,on+N);
+  const score=tau=>{ let c=0,q=0; for(let n=0;n<N;n+=2){ const p=ph(tau+n/sr); c+=seg[n]*Math.cos(p); q+=seg[n]*Math.sin(p); } return c*c+q*q; };
+  let best=-1,bt=0;
+  for(let tau=0;tau<=ch.dur-0.06;tau+=0.00025){ const v=score(tau); if(v>best){ best=v; bt=tau; } }
+  for(let tau=bt-0.0003;tau<=bt+0.0003;tau+=1/sr){ if(tau<0) continue; const v=score(tau); if(v>best){ best=v; bt=tau; } }
+  let e=0; for(let n=0;n<N;n+=2) e+=seg[n]*seg[n];
+  const M=Math.ceil(N/2);
+  return {onset:on/sr,tau:bt,start:ch.t0+bt,conf:best/(e*M/2+1e-12)};
+}
 async function analyzeCal(file){
   initAudio(); const out=$('#dgCal'); if(out) out.textContent='Reading the file…';
   try{
-    const buf=await file.arrayBuffer(), w=parseWav(buf), ab=await ctx.decodeAudioData(buf.slice(0));
-    const cal=S.diag.cal, bpm=cal?cal.bpm:S.bpm, beat=60/bpm, bar=4*beat, {ev,peak}=detectClicks(ab);
-    const L=[`File: ${file.name}, ${ab.duration.toFixed(2)} s, `+(w&&w.fmt?`${w.fmt.sr} Hz, ${w.fmt.bits}-bit, ${w.fmt.ch} channels`:`${ab.numberOfChannels} channels`)];
-    L.push(w?'Chunks: '+w.chunks.join(', '):'No RIFF header found.');
+    const buf=await file.arrayBuffer(), w=parseWav(buf); let ab=await ctx.decodeAudioData(buf.slice(0)), lead=0;
+    // a capture saved as a file starts with silence: count from where the sound begins
+    let on=ab.length; for(let c=0;c<ab.numberOfChannels;c++){ const d=ab.getChannelData(c); let i=0; while(i<on&&Math.abs(d[i])<0.01) i++; on=Math.min(on,i); }
+    if(on<ab.length&&on/ab.sampleRate>0.05){ lead=on/ab.sampleRate; const t=ctx.createBuffer(ab.numberOfChannels,ab.length-on,ab.sampleRate); for(let c=0;c<ab.numberOfChannels;c++) t.copyToChannel(ab.getChannelData(c).subarray(on),c); ab=t; }
+    analyzeAB(ab,{name:file.name,w,lead});
+  }catch(e){ const o=$('#dgCal'); if(o) o.textContent='Could not read that file: '+e.message; }
+}
+function analyzeAB(ab,meta){
+  {
+    const w=meta.w, cal=S.diag.cal, bpm=cal?cal.bpm:S.bpm, beat=60/bpm, bar=4*beat, {ev,peak}=detectClicks(ab);
+    const L=[`${meta.captured?'Captured playback':'File: '+meta.name}, ${ab.duration.toFixed(2)} s, `+(w&&w.fmt?`${w.fmt.sr} Hz, ${w.fmt.bits}-bit, ${w.fmt.ch} channels`:`${ab.numberOfChannels} channels`)];
+    if(!meta.captured) L.push(w?'Chunks: '+w.chunks.join(', '):'No RIFF header found.');
+    if(meta.lead) L.push(`The file begins with ${meta.lead.toFixed(3)} s of silence, like a capture, so times count from where the sound begins.`);
+    else L.push('Timing is measured from where the playback sound begins in the capture.');
     if(w&&w.extra.length) L.push('Chunk data: '+w.extra.join(' | '));
     const beeps=ev.filter(e=>e.dur>0.06), clicks=ev.filter(e=>e.dur<=0.06);
-    L.push(`Found ${clicks.length} clicks (expected 32)${beeps.length?`, beep at ${fmtT(beeps[0].t)} in the file`:''}. Peak ${(20*Math.log10(peak||1e-9)).toFixed(1)} dBFS.`);
+    const realBeep=beeps.length&&!(cal&&cal.chirp&&beeps[0].t<0.35);
+    L.push(`Found ${clicks.length} clicks (expected 32)${realBeep?`, beep at ${fmtT(beeps[0].t)} in the file`:''}. Peak ${(20*Math.log10(peak||1e-9)).toFixed(1)} dBFS.`);
     let sug=null;
     const fb=clicks.findIndex(c=>c.f>1500);
     if(fb<0) L.push('No bar click found, so timing could not be measured.');
@@ -1994,14 +2082,23 @@ async function analyzeCal(file){
       L.push(`Tempo drift ${Math.round(sl*1e6)||0} ppm, click timing spread ${(jit*1000).toFixed(2)} ms.`);
       sug={start:off*1000};
       if(w&&w.cues.length&&w.fmt){
-        const cs=w.cues.map(c=>c.off/w.fmt.sr).sort((a,b)=>a-b), d=cs.map(t=>(t-off-Math.round((t-off)/bar)*bar)*1000);
+        const cs=w.cues.map(c=>c.off/w.fmt.sr-(meta.lead||0)).sort((a,b)=>a-b), d=cs.map(t=>(t-off-Math.round((t-off)/bar)*bar)*1000);
         L.push(`Cue markers in the file: ${cs.length}. Distance from their bar lines in ms: ${d.map(x=>x.toFixed(1)).join(', ')}`);
         sug.markers=d.reduce((a,b)=>a+b,0)/d.length;
       } else L.push('No standard cue chunk in the file, so marker timing could not be read from it.');
       if(cal) L.push(`Calibration take: ${cal.bpm} bpm, started by ${cal.mode}, offset ${cal.off||0} ms, ${new Date(cal.at).toLocaleString()}.`);
     }
+    if(cal&&cal.chirp){
+      let bc=0,be=-1; for(let c=0;c<ab.numberOfChannels;c++){ const d=ab.getChannelData(c); let e2=0; for(let i=0;i<Math.min(d.length,ab.sampleRate);i+=4) e2+=d[i]*d[i]; if(e2>be){ be=e2; bc=c; } }
+      const r=chirpStart(ab.getChannelData(bc),ab.sampleRate,cal.chirp);
+      if(r&&r.conf>0.4&&r.tau>0.001){ const v=r.start*1000;
+        L.push(v>=0?`Sweep: the recording began ${v.toFixed(1)} ms after the app downbeat (match ${r.conf.toFixed(2)}).`:`Sweep: the recording began ${(-v).toFixed(1)} ms before the app downbeat (match ${r.conf.toFixed(2)}).`);
+        sug=Object.assign(sug||{},{start:-v});
+      } else if(r&&r.conf>0.4) L.push('Sweep: the recording began before the sweep, at least 300 ms before the downbeat.');
+      else L.push('Sweep: not found at the start, so the start time comes from the clicks only.');
+    }
     S.diag.calResult=L; S.diag.calSug=sug; S.diag.ran.cal=true; save(); renderDiag(); const c=$('#dgCal'); if(c) c.scrollIntoView({block:'center'});
-  }catch(e){ const o=$('#dgCal'); if(o) o.textContent='Could not read that file: '+e.message; }
+  }
 }
 function diagEnv(){
   const L=['Browser: '+navigator.userAgent];
@@ -2017,6 +2114,7 @@ function diagEnv(){
 function diagReport(){
   const D=S.diag, L=['Tinebox TP-7 diagnostics, '+new Date().toLocaleString(),...diagEnv(),`TP-7 firmware: ${D.fw||'(not entered)'}`,`TP-7 MIDI settings: ${D.set||'(not entered)'}`,`TP-7 record settings: ${D.rec||'(not entered)'}`,''];
   DIAG.forEach(t=>{
+    if(t.grp){ L.push(''); L.push(t.grp); }
     const answered=t.qs.some((q,qi)=>D.ans[t.id+':'+qi]!=null);
     L.push(t.t+(D.ran[t.id]||answered||(t.id==='input'&&R.inCount)?'':' (not run)'));
     t.qs.forEach((q,qi)=>{ const a=D.ans[t.id+':'+qi]; L.push(`  ${q[0]} ${a==null?'-':q[1][a]}`); });
@@ -2033,13 +2131,14 @@ function updReport(){ clearTimeout(updReport.t); updReport.t=setTimeout(()=>{ co
 function renderDiag(){
   const el=$('#dgIn'); if(!el) return; const D=S.diag, how=t=>typeof t.how==='function'?t.how():t.how;
   el.innerHTML=`<div class="rv-head"><h2 id="dgTitle">TP-7 diagnostics</h2><button type="button" class="btn" data-dact="close">Close</button></div>
-  <p class="note">Connect the TP-7 by USB-C and tap Connect MIDI in the TP-7 tab first. Run the tests in order and answer each one. Skip any you can't set up. Your answers save as you go. At the end, copy the report and paste it into our chat.</p>
+  <p class="note">Connect the TP-7 by USB-C and tap Connect MIDI in the TP-7 tab first. Part 1 needs the TP-7 MIDI mode on cue, part 2 on sync. Answer each test, skip any you can't set up, then copy the report and paste it into our chat.</p>
+  <div class="orow"><button type="button" class="btn" data-dact="fresh">Start a fresh round</button></div>
   <h3>Your TP-7</h3>
   <label class="dg-l">Firmware version<input class="dg-in" data-df="fw" value="${esc(D.fw)}" placeholder="For example 1.1.11"></label>
   <label class="dg-l">MIDI settings on the TP-7: names and values you see<textarea class="dg-ta" data-df="set" rows="2">${esc(D.set)}</textarea></label>
   <label class="dg-l">Record settings: auto start options, metronome, count-in, tempo<textarea class="dg-ta" data-df="rec" rows="2">${esc(D.rec)}</textarea></label>
   <h3>This phone</h3><pre class="dg-pre" id="dgEnv">${esc(diagEnv().join('\n'))}</pre>
-  ${DIAG.map(t=>`<div class="dg-card"><h4>${t.t}</h4><p class="dg-how">${esc(how(t))}</p>
+  ${DIAG.map(t=>`${t.grp?`<h3>${esc(t.grp)}</h3>`:''}<div class="dg-card"><h4>${t.t}</h4><p class="dg-how">${esc(how(t))}</p>
     ${t.acts.length?`<div class="orow">${t.acts.map((a,i)=>`<button type="button" class="btn" data-dact="run" data-dt="${t.id}" data-ai="${i}">${a[0]}</button>`).join('')}</div>`:''}
     <p class="status" id="dgs-${t.id}">${esc((R.dgStatus&&R.dgStatus[t.id])||'')}</p>
     ${t.extra?t.extra():''}
@@ -2061,6 +2160,7 @@ function bindDiag(){
     const b=e.target.closest('[data-dact]'); if(!b) return; const a=b.dataset.dact;
     if(a==='close'){ root.hidden=true; return; }
     if(a==='copy'){ const txt=diagReport(), ta=$('#dgReport'); ta.value=txt; try{ await navigator.clipboard.writeText(txt); toast('Report copied.'); }catch(err){ ta.focus(); ta.select(); toast('Select all the text in the box and copy it.'); } return; }
+    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
     if(a==='apply'){ S.tp.midiOffset=+b.dataset.v; save(); renderTpInfo(); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms.`); return; }
     if(a==='run'){
       const t=DIAG.find(x=>x.id===b.dataset.dt), act=t.acts[+b.dataset.ai];
