@@ -1906,7 +1906,7 @@ async function runCapture(){
   src.disconnect(); sp.disconnect(); z.disconnect(); st.getTracks().forEach(t=>t.stop()); back();
   const len=cl.reduce((a,x)=>a+x.length,0); if(!len) return 'Nothing was captured.';
   const l=new Float32Array(len), r=new Float32Array(len); let o=0; for(let i=0;i<cl.length;i++){ l.set(cl[i],o); r.set(cr[i],o); o+=cl[i].length; }
-  let on=0; while(on<len&&Math.max(Math.abs(l[on]),Math.abs(r[on]))<0.01) on++;
+  let on=0; while(on<len&&Math.max(Math.abs(l[on]),Math.abs(r[on]))<0.01) on++; while(on>0&&Math.max(Math.abs(l[on-1]),Math.abs(r[on-1]))>1e-4) on--;
   let pk=0; for(let i=0;i<len;i+=2){ const a=Math.max(Math.abs(l[i]),Math.abs(r[i])); if(a>pk) pk=a; }
   R.capWav=encodeWav([l,r],sr); R.capName='tp7-capture-'+new Date().toISOString().slice(0,19).replace(/[:T]/g,'-')+'.wav';
   const info=`Captured ${(len/sr).toFixed(1)} s, peak ${(20*Math.log10(pk||1e-9)).toFixed(1)} dBFS, sound began ${on<len?(on/sr).toFixed(3)+' s in':'nowhere'}.`;
@@ -2070,10 +2070,69 @@ DIAG.push(
     return `Sent cue record mode on, note 84 on ${ch!=null?'channel '+(ch+1):'all channels'}, cue record mode off.`; }]],
   qs:[['Did it add a cue?',['Yes','No']]]}
 );
+/* round 9: the documented MIDI cue workflow (MIDI setting cue + cue utility), tempo, motor */
+async function cueNotes(id,notes,prefix){ for(const n of notes){ setDs(id,`${prefix} Note ${noteLabel(n)} on channel 1…`); mNow([0x90,n,100]); await sleep(200); mNow([0x80,n,0]); await sleep(1800); } }
+async function runTrigger(id,notes,holdMs,gapMs){
+  R.tg={id,now:null,log:[],stop:false};
+  for(const n of notes){ if(R.tg.stop) break; R.tg.now=n;
+    setDs(id,`Note ${noteLabel(n)} on channel 1, held ${(holdMs/1000).toFixed(1)} s. Tap It jumped if the TP-7 jumps or plays.`);
+    mNow([0x90,n,100]); await sleep(holdMs); mNow([0x80,n,0]); await sleep(gapMs); }
+  const res=(R.tg.log.length?'Jumps at notes: '+R.tg.log.join(', ')+'.':'No jumps reported.')+(R.tg.stop?' Stopped early.':'');
+  R.tg.now=null; dgExtra(id,[res]); return res;
+}
+const jumpAct=id=>['It jumped',async()=>{ if(!R.tg||R.tg.id!==id||R.tg.now==null) return 'Start the run first.'; R.tg.log.push(noteLabel(R.tg.now)); return `Logged note ${R.tg.now}. The run continues.`; }];
+const stopAct=id=>['Stop',async()=>{ if(R.tg&&R.tg.id===id) R.tg.stop=true; return 'Stopping…'; }];
+const CUE_Q=['None','1','2 or 3','4','5 or more'];
+async function runClkRec(){
+  initAudio(); if(!ctx) return 'Audio did not start.'; if(R.playing||R.take) return 'Stop playback first.';
+  const bpm=S.bpm, beat=60/bpm, bar=4*beat, tick=beat/24; R.clockMute=true;
+  const T0=ctx.currentTime+0.3, D=T0+2*beat, E=D+4*bar;
+  for(let t=T0;t<E+beat;t+=tick) midiSend([0xF8],t);
+  mNow([0xB0,14,127]); midiSend([0xFA],D);
+  for(let i=0;i<16;i++) calClick(D+i*beat,i%4===0);
+  midiSend([0xFC],E); midiSend([0xB0,14,0],E+0.05);
+  setDs('clkRec',`Recording 4 bars of clicks at ${bpm} bpm while sending MIDI clock…`);
+  await sleep((E+beat-ctx.currentTime)*1000+300); R.clockMute=false;
+  return `Recorded 4 bars of clicks at ${bpm} bpm, with MIDI clock running from 2 beats before the start.`;
+}
+async function runMotor(){
+  const prev=S.diag.calResult&&S.diag.calResult.slice(), prevSug=S.diag.calSug;
+  const msg=await runCapture(); await sleep(200);
+  const got=(S.diag.calResult||[]).filter(x=>/^Sweep|^Playback start-up/.test(x));
+  if(got.length&&!got.some(x=>/^Playback start-up/.test(x))) got.push('Playback start-up: no loss above 1 ms.');
+  dgExtra('motor',got.length?got:['No sweep result. '+msg]);
+  S.diag.calResult=prev; S.diag.calSug=prevSug; save(); renderDiag();
+  return got.join(' ')||msg;
+}
+DIAG.push(
+ {id:'cSet16',t:'Set cues with cue record mode (CC 16)',how:'MIDI setting: cue. Load a scratch recording, tap up until the screen shows CUE, and start playback. Do not touch record. Run turns on cue record mode, sends notes 0, 1, 2 and 3 two seconds apart, then turns it off. Then count the cues with + and −.',
+  acts:[['Run',async()=>{ mNow([0xB0,16,127]); await sleep(300); await cueNotes('cSet16',[0,1,2,3],'Cue record mode on.'); mNow([0xB0,16,0]); return 'Sent cue record mode on, notes 0 to 3, cue record mode off.'; }]],
+  qs:[['How many cues does the recording have now?',CUE_Q]]},
+ {id:'cTrig16',t:'Trigger cues 0 to 3',how:'Same recording, cue utility still on. Stop the TP-7. Run sends notes 0 to 3, each held for 1.5 s, without cue record mode. Tap It jumped whenever the TP-7 jumps or starts playing.',
+  acts:[['Run',()=>runTrigger('cTrig16',[0,1,2,3],1500,1000)],jumpAct('cTrig16'),stopAct('cTrig16')],
+  qs:[['What did each note do?',['Jumped and played while held','Jumped and kept playing','Jumped only','Nothing']]]},
+ {id:'cSetHold',t:'Set cues by holding record',how:'The manual’s method. Same recording, cue utility on, playing. Run gives you 2 s to press and hold record, then sends notes 4, 5, 6 and 7 two seconds apart. Keep holding until the status says to let go.',
+  acts:[['Run',async()=>{ setDs('cSetHold','Press and hold record now. Notes start in 2 s.'); await sleep(2000); await cueNotes('cSetHold',[4,5,6,7],'Keep holding record.'); return 'Sent notes 4 to 7. Let go of record now.'; }]],
+  qs:[['How many cues does the recording have now?',CUE_Q],['When did new cues appear?',['On each note','Only when I let go','Never']]]},
+ {id:'cTrigHold',t:'Trigger cues 4 to 7',how:'Stop the TP-7, record not held. Run sends notes 4 to 7, each held for 1.5 s.',
+  acts:[['Run',()=>runTrigger('cTrigHold',[4,5,6,7],1500,1000)],jumpAct('cTrigHold'),stopAct('cTrigHold')],
+  qs:[['What did each note do?',['Jumped and played while held','Jumped and kept playing','Jumped only','Nothing']]]},
+ {id:'cHand',t:'Which notes trigger cues set by hand?',how:'Switch to a fresh recording (that clears the MIDI cues). Add 2 or 3 cues by hand: hold record and press +. Stop the TP-7. Run sends notes 0 to 15, one every 1.5 s. Tap It jumped when it reacts.',
+  acts:[['Run',()=>runTrigger('cHand',Array.from({length:16},(_,i)=>i),800,700)],jumpAct('cHand'),stopAct('cHand')],
+  qs:[['Did any note trigger a hand-set cue?',['Yes, logged','No']]]},
+ {id:'clkRec',t:'Bars and tempo on the TP-7',how:()=>`MIDI setting: sync. Cue utility off. Run sends ${S.bpm} bpm MIDI clock, arms, starts recording on a downbeat and records 4 bars of clicks with an accent on each bar. Afterwards, hold stop and tap mode to see the file info, then hold stop and press up to jump bar by bar, pressing play after each jump to hear where it landed. If the file shows the TP-7's own tempo, set the TP-7 record tempo to ${S.bpm} bpm and run it again.`,
+  acts:[['Run',runClkRec]],
+  qs:[['Which tempo does the file info show?',['The app’s tempo','The TP-7’s own tempo setting','No tempo shown','Not sure']],['Do bar jumps land on the accented clicks?',['Yes, every bar','They jump, but off the clicks','No jumps']]]},
+ {id:'motor',t:'Playback start with the tape motor off',how:'Settings, SYS, MOTOR: set it to off. Leave the TP-7 on the calibration recording from test 9, stopped and not armed. Run plays it by MIDI, captures it and measures the start-up loss again, without replacing the result of test 9.',
+  acts:[['Run',runMotor]],
+  qs:[['Was MOTOR off for this run?',['Yes','No']]]}
+);
 const DIAG_PLAN=[
-  ['Part 1: cues. TP-7 in cue mode (MODE button), MIDI mode left on sync',['chfind','autocue','recall2']],
-  ['Part 2: timing. Switch the TP-7 back to its normal mode for both tests',['cal','capture']],
-  ['Part 3: the guitar looper',['looper']]
+  ['Part 1: MIDI setting cue, cue utility on (tap up until CUE shows), scratch recording',['cSet16','cTrig16','cSetHold','cTrigHold','cHand']],
+  ['Part 2: still on cue, cue utility off. Does the app keep control?',['start','loop']],
+  ['Part 3: MIDI setting sync. Tempo and bars',['clkRec']],
+  ['Part 4: timing and the tape motor, cue utility off',['cal','capture','motor']],
+  ['Part 5: the guitar looper',['looper']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -2082,8 +2141,10 @@ const DIAG_PLAN=[
   H('cueset','Start a recording or playback on the TP-7. Run turns on cue record mode, sets 4 markers 1 s apart (notes 36 to 39), then turns it off.');
   H('cuego','Stop the TP-7 on the recording from test 2. Try each button once and watch for a jump to the second marker.');
   H('input','Switch the TP-7 MIDI mode to ctrl. Press every button once, turn the wheel both ways and move the rocker, then switch back to cue.');
-  H('capture','Leave the TP-7 on the recording from test 4, stopped and not armed. Capture plays it by MIDI, records what comes back over USB and measures it right away. Then tap Share WAV and send the file into our chat.');
-  H('cal',()=>`Keep the TP-7 source set the way you record takes, as long as it records the USB input, and mute the guitar. Uses ${S.tp.startMode==='start'?'MIDI start':S.tp.startMode} at ${S.bpm} bpm with your ${S.tp.midiOffset} ms offset. Record plays a short rising sweep across the downbeat, then 8 bars of clicks. Then run test 5 to measure it.`);
+  H('capture','Leave the TP-7 on the recording from test 9, stopped and not armed. Capture plays it by MIDI, records what comes back over USB and measures it right away. Then tap Share WAV and send the file into our chat.');
+  H('start','MIDI setting: cue, cue utility off. Run arms, sends MIDI start 1 s later, MIDI stop 4 s after that, then disarms.');
+  H('loop','MIDI setting: cue. Start playback on the TP-7. Run sets loop in (CC 17 = 1), then loop out (2) 2 s later. Listen, then tap Loop off.');
+  H('cal',()=>`Keep the TP-7 source set the way you record takes, as long as it records the USB input, and mute the guitar. Uses ${S.tp.startMode==='start'?'MIDI start':S.tp.startMode} at ${S.bpm} bpm with your ${S.tp.midiOffset} ms offset. Record plays a short rising sweep across the downbeat, then 8 bars of clicks. Then run test 10 to measure it.`);
 })();
 DIAG.forEach((t,i)=>{ t.t=(i+1)+'. '+t.t.replace(/^\d+\.\s*/,''); });
 async function measureTimer(){
@@ -2145,24 +2206,53 @@ function detectClicks(ab){
   return {ev,peak};
 }
 /* where a recording starts, read from the sweep: the sweep's pitch at the first sound tells the time */
+function fftInPlace(re,im,inv){
+  const n=re.length;
+  for(let i=1,j=0;i<n;i++){ let bit=n>>1; for(;j&bit;bit>>=1) j^=bit; j^=bit; if(i<j){ let t=re[i]; re[i]=re[j]; re[j]=t; t=im[i]; im[i]=im[j]; im[j]=t; } }
+  for(let len=2;len<=n;len<<=1){ const ang=2*Math.PI/len*(inv?1:-1), wr=Math.cos(ang), wi=Math.sin(ang), h=len>>1;
+    for(let i=0;i<n;i+=len){ let cr=1,ci=0; for(let j=0;j<h;j++){ const a=i+j,b=a+h, xr=re[b]*cr-im[b]*ci, xi=re[b]*ci+im[b]*cr;
+      re[b]=re[a]-xr; im[b]=im[a]-xi; re[a]+=xr; im[a]+=xi; const t=cr*wr-ci*wi; ci=cr*wi+ci*wr; cr=t; } } }
+  if(inv) for(let i=0;i<n;i++){ re[i]/=n; im[i]/=n; }
+}
+/* Where in the sweep did the recording begin? TP-7 playback starts slow and speeds up, so frequency
+   alone misleads. The sweep's accumulated phase counts how much of the file has played, at any speed. */
 function chirpStart(x,sr,ch){
   let on=0; while(on<x.length&&Math.abs(x[on])<0.01) on++;
-  const N=Math.round(sr*0.06); if(on+N>x.length) return null;
-  const k=(ch.f1-ch.f0)/ch.dur, ph=t=>2*Math.PI*(ch.f0*t+0.5*k*t*t), seg=x.subarray(on,on+N);
-  const score=tau=>{ let c=0,q=0; for(let n=0;n<N;n+=2){ const p=ph(tau+n/sr); c+=seg[n]*Math.cos(p); q+=seg[n]*Math.sin(p); } return c*c+q*q; };
-  let best=-1,bt=0;
-  for(let tau=0;tau<=ch.dur-0.06;tau+=0.00025){ const v=score(tau); if(v>best){ best=v; bt=tau; } }
-  for(let tau=bt-0.0003;tau<=bt+0.0003;tau+=1/sr){ if(tau<0) continue; const v=score(tau); if(v>best){ best=v; bt=tau; } }
-  let e=0; for(let n=0;n<N;n+=2) e+=seg[n]*seg[n];
-  const M=Math.ceil(N/2);
-  return {onset:on/sr,tau:bt,start:ch.t0+bt,conf:best/(e*M/2+1e-12)};
+  if(on>=x.length) return null;
+  while(on>0&&Math.abs(x[on-1])>1e-4) on--;
+  const len=Math.min(x.length-on,Math.round(sr*(ch.dur+0.08))); if(len<sr*0.15) return null;
+  let N=1; while(N<len*2) N<<=1;
+  const re=new Float64Array(N), im=new Float64Array(N); for(let i=0;i<len;i++) re[i]=x[on+i];
+  fftInPlace(re,im,false);
+  const lo=ch.f0*0.5, hi=ch.f1*1.3;
+  for(let i=0;i<N;i++){ const f=(i<=N/2?i:i-N)*sr/N; if(f<lo||f>hi){ re[i]=0; im[i]=0; } else { re[i]*=2; im[i]*=2; } }
+  fftInPlace(re,im,true);
+  const ph=new Float64Array(len), amp=new Float64Array(len); let prev=0, acc=0;
+  for(let i=0;i<len;i++){ const q=Math.atan2(im[i],re[i]); if(i){ let d=q-prev; while(d>Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; acc+=d; } prev=q; ph[i]=acc; amp[i]=Math.hypot(re[i],im[i]); }
+  const k=(ch.f1-ch.f0)/ch.dur, Phi=u=>2*Math.PI*(ch.f0*u+0.5*k*u*u), fAt=i=>(ph[i+1]-ph[i-1])*sr/(4*Math.PI);
+  // steady part: from 80 ms after the start until the sweep ends
+  const i80=Math.round(0.08*sr); if(i80+2>=len) return null;
+  let ref=0; for(let i=i80;i<Math.min(len-1,i80+Math.round(0.03*sr));i++) ref=Math.max(ref,amp[i]);
+  let iEnd=i80; while(iEnd<len-2&&amp[iEnd]>0.3*ref) iEnd++; iEnd-=Math.round(0.01*sr);
+  if(iEnd-i80<0.04*sr) return null;
+  const step=Math.max(1,Math.round(sr*0.002)), cs=[];
+  for(let i=i80;i<iEnd;i+=step) cs.push((fAt(i)-ch.f0)/k-i/sr);
+  cs.sort((a,b)=>a-b); const c=cs[cs.length>>1];
+  // phase since just after the start = Phi(u now) - Phi(u then), whatever the speed was in between
+  const i0=Math.max(1,Math.round(0.002*sr)), us=[];
+  for(let i=i80;i<iEnd;i+=step*2){ const target=Phi(i/sr+c)-(ph[i]-ph[i0]); let a=-0.05,b=ch.dur+0.1;
+    for(let it=0;it<60;it++){ const m=(a+b)/2; if(Phi(m)<target) a=m; else b=m; } us.push(a); }
+  us.sort((a,b)=>a-b); const u2=us[us.length>>1], spread=us[us.length-1]-us[0];
+  // walk back from 2 ms to the first sample, one sample at a time, at the measured playback speed
+  let uStart=u2; for(let j=i0;j>=1;j--){ const sp=clamp(fAt(Math.max(1,j))/(ch.f0+k*uStart),0,1.5); uStart-=sp/sr; }
+  return {start:ch.t0+uStart,uStart,lag:uStart-c,spread,conf:Math.max(0,1-spread*1000/2)};
 }
 async function analyzeCal(file){
   initAudio(); const out=$('#dgCal'); if(out) out.textContent='Reading the file…';
   try{
     const buf=await file.arrayBuffer(), w=parseWav(buf); let ab=await ctx.decodeAudioData(buf.slice(0)), lead=0;
     // a capture saved as a file starts with silence: count from where the sound begins
-    let on=ab.length; for(let c=0;c<ab.numberOfChannels;c++){ const d=ab.getChannelData(c); let i=0; while(i<on&&Math.abs(d[i])<0.01) i++; on=Math.min(on,i); }
+    let on=ab.length; for(let c=0;c<ab.numberOfChannels;c++){ const d=ab.getChannelData(c); let i=0; while(i<on&&Math.abs(d[i])<0.01) i++; while(i>0&&Math.abs(d[i-1])>1e-4) i--; on=Math.min(on,i); }
     if(on<ab.length&&on/ab.sampleRate>0.05){ lead=on/ab.sampleRate; const t=ctx.createBuffer(ab.numberOfChannels,ab.length-on,ab.sampleRate); for(let c=0;c<ab.numberOfChannels;c++) t.copyToChannel(ab.getChannelData(c).subarray(on),c); ab=t; }
     analyzeAB(ab,{name:file.name,w,lead});
   }catch(e){ const o=$('#dgCal'); if(o) o.textContent='Could not read that file: '+e.message; }
@@ -2203,11 +2293,12 @@ function analyzeAB(ab,meta){
     if(cal&&cal.chirp){
       let bc=0,be=-1; for(let c=0;c<ab.numberOfChannels;c++){ const d=ab.getChannelData(c); let e2=0; for(let i=0;i<Math.min(d.length,ab.sampleRate);i+=4) e2+=d[i]*d[i]; if(e2>be){ be=e2; bc=c; } }
       const r=chirpStart(ab.getChannelData(bc),ab.sampleRate,cal.chirp);
-      if(r&&r.conf>0.4&&r.tau>0.001){ const v=r.start*1000;
-        L.push(v>=0?`Sweep: the recording began ${v.toFixed(1)} ms after the app downbeat (match ${r.conf.toFixed(2)}).`:`Sweep: the recording began ${(-v).toFixed(1)} ms before the app downbeat (match ${r.conf.toFixed(2)}).`);
+      if(r&&r.conf>0.4&&r.uStart>0.002){ const v=r.start*1000;
+        L.push(v>=0?`Sweep: the recording began ${v.toFixed(1)} ms after the app downbeat (phase spread ${(r.spread*1000).toFixed(2)} ms).`:`Sweep: the recording began ${(-v).toFixed(1)} ms before the app downbeat (phase spread ${(r.spread*1000).toFixed(2)} ms).`);
+        if(r.lag>0.001) L.push(`Playback start-up: the TP-7 lost ${(r.lag*1000).toFixed(1)} ms getting up to speed. The click figure above includes that loss, so trust the sweep figure.`);
         sug=Object.assign(sug||{},{start:-v});
       } else if(r&&r.conf>0.4) L.push('Sweep: the recording began before the sweep, at least 300 ms before the downbeat.');
-      else L.push('Sweep: not found at the start, so the start time comes from the clicks only.');
+      else L.push('Sweep: not readable at the start, so the start time comes from the clicks only.');
     }
     S.diag.calResult=L; S.diag.calSug=sug; S.diag.ran.cal=true; save(); renderDiag(); const c=$('#dgCal'); if(c) c.scrollIntoView({block:'center'});
   }
