@@ -1137,6 +1137,7 @@ function sxMsg(op){ sxId=sxId%4095+1; return [0xF0,0x00,0x20,0x76,0x19,0x40,0x60
 function tapeArm(m,at){ midiSend([0xB0,14,127],at); if(m==='sysex') midiSend(sxMsg(SXOP.session),at); }
 function tapeStart(m,at){ if(m==='start') midiSend([0xFA],at); else if(m==='rocker') midiSend([0xB0,18,68],at); else if(m==='sysex') midiSend(sxMsg(SXOP.play),at); }
 function tapeStop(m,at){ if(m==='start'||m==='arm') midiSend([0xFC],at); else if(m==='rocker') midiSend([0xB0,18,64],at); else if(m==='sysex') midiSend(sxMsg(SXOP.stop),at); }
+async function tapeRewind(){ if(S.tp.startMode!=='sysex') return; mNow(sxMsg(SXOP.stop)); await sleep(250); mNow(sxMsg(SXOP.stop)); await sleep(400); }
 function playNow(){ if(S.tp.startMode==='sysex'){ mNow(sxMsg(SXOP.session)); mNow(sxMsg(SXOP.play)); } else mNow([0xFA]); }
 function stopNow(){ if(S.tp.startMode==='sysex') mNow(sxMsg(SXOP.stop)); else mNow([0xFC]); }
 function testStart(){
@@ -1673,12 +1674,13 @@ function rvLoop(){
 }
 /* marker pass: the TP-7 cannot take cues while recording, so after a take the app plays it once (SysEx)
    and places one cue per bar (or per N bars / section) with cue record mode, notes 0 to 127 */
-function rvMarkerPass(){
+async function rvMarkerPass(){
   const k=WV.k; if(!k) return;
   if(S.tp.startMode!=='sysex'||R.sysex!==true){ toast('Bar markers need the SysEx start method, with SysEx allowed when connecting MIDI.'); return; }
   if(!midiReady()){ toast('Connect MIDI first: TP-7 tab, More, Connect MIDI.'); return; }
   if(R.mpass||R.playing||R.take){ toast('Stop playback first.'); return; }
   initAudio(); stopReview();
+  R.mpass={msg:'Rewinding the TP-7 to the start of the take…'}; rvReadout(); await tapeRewind(); R.mpass=null;
   const bd=barDurOf(k), bars=Math.max(1,Math.floor((k.dur+1e-3)/bd)), ev=S.tp.cueEvery;
   const secs=new Set((k.cues||[]).map(c=>Math.round(c.t/bd))), list=[];
   for(let b=0;b<bars&&list.length<128;b++) if(ev==='section'?secs.has(b)||b===0:b%(+ev||1)===0) list.push(b);
@@ -1946,7 +1948,7 @@ async function runCapture(){
   const cl=[],cr=[]; let n=0; const max=Math.ceil((secs+1)*sr);
   sp.onaudioprocess=e=>{ if(n>=max) return; const a=e.inputBuffer.getChannelData(0), b=e.inputBuffer.numberOfChannels>1?e.inputBuffer.getChannelData(1):a; cl.push(new Float32Array(a)); cr.push(new Float32Array(b)); n+=a.length; };
   src.connect(sp); sp.connect(z); z.connect(ctx.destination);
-  await sleep(500); playNow(); setDs('capture',`Capturing ${Math.round(secs)} s of TP-7 playback…`);
+  setDs('capture','Rewinding the TP-7…'); await tapeRewind(); await sleep(300); playNow(); setDs('capture',`Capturing ${Math.round(secs)} s of TP-7 playback…`);
   await sleep(secs*1000); stopNow(); await sleep(300);
   src.disconnect(); sp.disconnect(); z.disconnect(); st.getTracks().forEach(t=>t.stop()); back();
   const len=cl.reduce((a,x)=>a+x.length,0); if(!len) return 'Nothing was captured.';
@@ -2212,6 +2214,7 @@ async function runBarcode(){
 async function runMarkerPass(){
   initAudio(); const bc=S.diag.barcode; if(!bc) return 'Record the bar code take first (test 4).';
   if(!midiReady()) return 'Connect MIDI first.';
+  setDs('mpass','Rewinding the TP-7 to the start of the recording…'); await tapeRewind();
   const bar=240/bc.bpm, d=(S.tp.mDelay||0)/1000, T=ctx.currentTime+0.5, E=T+8*bar+0.3;
   midiSend(sxMsg(SXOP.session),T-0.25); midiSend(sxMsg(SXOP.play),T); midiSend([0xB0,16,127],T+0.01);
   for(let b=0;b<8;b++){ const t=b===0?T+0.02:T+d+b*bar; midiSend([0x90,b,100],t); midiSend([0x80,b,0],t+0.1); }
@@ -2280,14 +2283,19 @@ DIAG.push(
   qs:[['What happened?',['Played from the start, then stopped','Played from where it was, then stopped','Played and kept playing','Nothing']]]},
  {id:'barcode',t:'Record a bar code take',how:'MIDI setting cue, cue utility off, start method SysEx. Run records 8 bars in which every bar is one rising sweep. The marker tests use this recording.',
   acts:[['Run',runBarcode]],qs:[['Did it record about 8 bars?',['Yes','No']]]},
- {id:'mpass',t:'Marker pass',how:()=>`Stay on the bar code recording, stopped at its start. Tap up until CUE shows. Run plays it with SysEx and places one cue per bar (notes 0 to 7) using a ${S.tp.mDelay} ms marker delay.`,
+ {id:'mpass',t:'Marker pass',how:()=>`Stay on the bar code recording, stopped. Tap up until CUE shows. Run rewinds it, plays it with SysEx and places one cue per bar (notes 0 to 7) using a ${S.tp.mDelay} ms marker delay.`,
   acts:[['Run',runMarkerPass]],qs:[['How many cues does it have now?',CUE_Q]]},
  {id:'mcheck',t:'Measure the markers',how:'Cue utility still on, TP-7 stopped. Run triggers each cue in turn, captures the playback over USB and works out how far each cue sits from its bar line. If it suggests a new delay, apply it, then run tests 6 and 7 again.',
   acts:[['Run',runMarkerCheck]],qs:[],
   extra:()=>S.diag.mdSug!=null?`<button type="button" class="btn" data-dact="applyMD" data-v="${S.diag.mdSug}">Use ${S.diag.mdSug} ms as marker delay</button>`:''}
 );
+DIAG.push(
+ {id:'sxRew',t:'Rewind with SysEx stop',how:'MIDI setting cue, cue utility off, a recording without cues. Play it to somewhere in the middle and stop it there. Run sends SysEx stop twice (stop while stopped jumps to the start), then plays for 3 s and stops.',
+  acts:[['Run',async()=>{ if(R.sysex===false) return 'SysEx access was refused.'; const m=S.tp.startMode; S.tp.startMode='sysex'; await tapeRewind(); S.tp.startMode=m; mNow(sxMsg(SXOP.session)); await sleep(250); mNow(sxMsg(SXOP.play)); await sleep(3000); mNow(sxMsg(SXOP.stop)); return 'Sent stop, stop, then play for 3 s, then stop.'; }]],
+  qs:[['Where did it play from?',['The beginning of the recording','Where it was stopped','Somewhere else','It did not play']]]}
+);
 const DIAG_PLAN=[
-  ['Part 1: MIDI setting cue, cue utility off, start method SysEx',['sxPlay','cal','capture']],
+  ['Part 1: MIDI setting cue, cue utility off, start method SysEx',['sxRew','cal','capture']],
   ['Part 2: bar markers on the TP-7',['barcode','mpass','mcheck']],
   ['Part 3: the guitar looper',['looper']]
 ];
@@ -2298,7 +2306,7 @@ const DIAG_PLAN=[
   H('cueset','Start a recording or playback on the TP-7. Run turns on cue record mode, sets 4 markers 1 s apart (notes 36 to 39), then turns it off.');
   H('cuego','Stop the TP-7 on the recording from test 2. Try each button once and watch for a jump to the second marker.');
   H('input','Switch the TP-7 MIDI mode to ctrl. Press every button once, turn the wheel both ways and move the rocker, then switch back to cue.');
-  H('capture','Leave the TP-7 on the recording from test 2, stopped and not armed. Capture plays it by MIDI, records what comes back over USB and measures it right away. Then tap Share WAV and send the file into our chat.');
+  H('capture','Leave the TP-7 on the recording from test 2, stopped and not armed. Capture rewinds it, plays it by MIDI, records what comes back over USB and measures it right away. Then tap Share WAV and send the file into our chat.');
   H('start','MIDI setting: cue, cue utility off. Run arms, sends MIDI start 1 s later, MIDI stop 4 s after that, then disarms.');
   H('cont','MIDI setting cue, cue utility off. Run arms, sends MIDI continue 1 s later, MIDI stop 4 s after that, then disarms.');
   H('rocker','MIDI setting cue, cue utility off. Run arms, pushes the virtual rocker to play (CC 18 = 68) 1 s later, back to stop (64) 4 s after that, then disarms.');
@@ -2527,7 +2535,7 @@ function bindDiag(){
     const b=e.target.closest('[data-dact]'); if(!b) return; const a=b.dataset.dact;
     if(a==='close'){ root.hidden=true; return; }
     if(a==='copy'){ const txt=diagReport(), ta=$('#dgReport'); ta.value=txt; try{ await navigator.clipboard.writeText(txt); toast('Report copied.'); }catch(err){ ta.focus(); ta.select(); toast('Select all the text in the box and copy it.'); } return; }
-    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
+    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
     if(a==='applyMD'){ S.tp.mDelay=+b.dataset.v; save(); renderDiag(); toast(`Marker delay set to ${S.tp.mDelay} ms.`); return; }
     if(a==='apply'){ setOffset(+b.dataset.v); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms for ${offKey()}.`); return; }
     if(a==='run'){
