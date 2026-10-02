@@ -1132,6 +1132,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
+const APP_BUILD='25 (3 Oct 2026)';
 const SXOP={session:0x40,play:0x50,stop:0x51}; let sxId=0;
 function sxMsg(op){ sxId=sxId%4095+1; return [0xF0,0x00,0x20,0x76,0x19,0x40,0x60|((sxId>>7)&0x1F),sxId&0x7F,0x7F,0x00,op,0xF7]; }
 function tapeArm(m,at){ midiSend([0xB0,14,127],at); if(m==='sysex') midiSend(sxMsg(SXOP.session),at); }
@@ -2284,7 +2285,7 @@ DIAG.push(
  {id:'barcode',t:'Record a bar code take',how:'MIDI setting cue, cue utility off, start method SysEx. Run records 8 bars in which every bar is one rising sweep. The marker tests use this recording.',
   acts:[['Run',runBarcode]],qs:[['Did it record about 8 bars?',['Yes','No']]]},
  {id:'mpass',t:'Marker pass',how:()=>`Stay on the bar code recording, stopped. Tap up until CUE shows. Run rewinds it, plays it with SysEx and places one cue per bar (notes 0 to 7) using a ${S.tp.mDelay} ms marker delay.`,
-  acts:[['Run',runMarkerPass]],qs:[['How many cues does it have now?',CUE_Q]]},
+  acts:[['Run',runMarkerPass]],qs:[['What did the TP-7 do during the pass?',['Rewound, then played the whole take','Played, but not from the start','Did not play']],['How many cues does it have now?',CUE_Q]]},
  {id:'mcheck',t:'Measure the markers',how:'Cue utility still on, TP-7 stopped. Run triggers each cue in turn, captures the playback over USB and works out how far each cue sits from its bar line. If it suggests a new delay, apply it, then run tests 6 and 7 again.',
   acts:[['Run',runMarkerCheck]],qs:[],
   extra:()=>S.diag.mdSug!=null?`<button type="button" class="btn" data-dact="applyMD" data-v="${S.diag.mdSug}">Use ${S.diag.mdSug} ms as marker delay</button>`:''}
@@ -2485,7 +2486,7 @@ function diagEnv(){
   return L;
 }
 function diagReport(){
-  const D=S.diag, L=['Tinebox TP-7 diagnostics, '+new Date().toLocaleString(),...diagEnv(),`TP-7 firmware: ${D.fw||'(not entered)'}`,`TP-7 MIDI settings: ${D.set||'(not entered)'}`,`TP-7 record settings: ${D.rec||'(not entered)'}`,''];
+  const D=S.diag, L=['Tinebox TP-7 diagnostics, '+new Date().toLocaleString(),'App build: '+APP_BUILD,...diagEnv(),`TP-7 firmware: ${D.fw||'(not entered)'}`,`TP-7 MIDI settings: ${D.set||'(not entered)'}`,`TP-7 record settings: ${D.rec||'(not entered)'}`,''];
   DIAG.forEach(t=>{
     if(t.grp){ L.push(''); L.push(t.grp); }
     const answered=t.qs.some((q,qi)=>D.ans[t.id+':'+qi]!=null);
@@ -2505,7 +2506,7 @@ function setDs(id,txt){ (R.dgStatus=R.dgStatus||{})[id]=txt; const el=$('#dgs-'+
 function updReport(){ clearTimeout(updReport.t); updReport.t=setTimeout(()=>{ const r=$('#dgReport'); if(r) r.value=diagReport(); },150); }
 function renderDiag(){
   const el=$('#dgIn'); if(!el) return; const D=S.diag, how=t=>typeof t.how==='function'?t.how():t.how;
-  el.innerHTML=`<div class="rv-head"><h2 id="dgTitle">TP-7 diagnostics</h2><button type="button" class="btn" data-dact="close">Close</button></div>
+  el.innerHTML=`<div class="rv-head"><h2 id="dgTitle">TP-7 diagnostics <small style="font-weight:500;color:var(--ink-2);font-size:13px">build ${APP_BUILD}</small></h2><button type="button" class="btn" data-dact="close">Close</button></div>
   <p class="note">Connect the TP-7 by USB-C and tap Connect MIDI in the TP-7 tab first. Part 1 needs the TP-7 MIDI mode on cue, part 2 on sync. Answer each test, skip any you can't set up, then copy the report and paste it into our chat.</p>
   <div class="orow"><button type="button" class="btn" data-dact="fresh">Start a fresh round</button></div>
   <h3>Your TP-7</h3>
