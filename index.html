@@ -1132,7 +1132,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='30 (3 Oct 2026)';
+const APP_BUILD='31 (5 Oct 2026)';
 const SXOP={session:0x40,play:0x50,stop:0x51}; let sxId=0;
 function sxMsg(op){ sxId=sxId%4095+1; return [0xF0,0x00,0x20,0x76,0x19,0x40,0x60|((sxId>>7)&0x1F),sxId&0x7F,0x7F,0x00,op,0xF7]; }
 function tapeArm(m,at){ midiSend([0xB0,14,127],at); if(m==='sysex') midiSend(sxMsg(SXOP.session),at); }
@@ -1489,7 +1489,7 @@ const CHECK=[
   {id:'source',t:()=>'On the TP-7, set the source to manual: USB on track 1, the guitar jack on track 2. Takes need the USB input recorded, or the app is missing from them.'},
   {id:'guitar',t:()=>'Run the guitar through a DI box, preamp or pedal with a line out. The TP-7 input is 9.5 kΩ, too low for a passive guitar.'},
   {id:'autooff',t:()=>'Turn off auto start and count-in in the TP-7 record settings. Auto start shows a T next to REC and blocks MIDI start, and count-in can shift where the recording begins.'},
-  {id:'tempo',t:()=>S.tp.clock?`Tempo: the app's clock gives each take ${S.bpm} bpm. Only takes you start on the TP-7 itself use its own tempo setting. Keep its count-in off.`:`Turn on Send tempo as MIDI clock, or set the TP-7 record tempo to ${S.bpm} bpm by hand. Keep its count-in off.`},
+  {id:'tempo',t:()=>`Optional: set the TP-7 record tempo to ${S.bpm} bpm by hand if you use its metronome or its own bar jumps. The app cannot set it (tested on 5 Oct), and its bar markers work at any TP-7 tempo. Keep the count-in off.`},
   {id:'midicue2',t:()=>S.tp.startMode==='sysex'?'TP-7 MIDI setting: cue, and leave it there. The app records, sets the tempo of each take, places bar markers, jumps and loops in this one setting. It cannot change the setting for you.':'TP-7 MIDI setting: sync. MIDI start only records in sync; switch to the SysEx method to use cue.'},
   {id:'monitor',t:()=>'Plug headphones into the TP-7 and turn input thru on, so you hear the app and the guitar together.'},
   {id:'levels',t:()=>'Play the test tone. It should sit well below the top of the TP-7 meter. Then set the guitar gain.',x:()=>`<div class="orow"><button type="button" class="tog" id="toneBtn" data-act="tone" aria-pressed="${!!R.tone}">Test tone, 1 kHz at −18 dBFS</button><output id="peakOut">Peak: silent</output></div>`},
@@ -1527,7 +1527,7 @@ function renderTpInfo(){
     :sm==='beep'?'Arms the TP-7 with CC 14. The start beep then triggers its auto start record, so turn that on in the TP-7 record settings, set to start only.'
     :sm==='rocker'?'Arms the TP-7 with CC 14, then pushes its tape rocker forward with CC 18 on the downbeat, and back to stop after the tail.'
     :'You press record on the TP-7 during the pre-roll.')+(sm==='start'?' Works with the TP-7 MIDI setting on sync only.':'');
-  renderTpTempo(); $('#clockNote').textContent=S.tp.clock?`Sends ${S.bpm} bpm as MIDI clock, with a song position reset before each take, so every take the app records carries the project tempo and the TP-7's bar jumps follow it. The tempo in the TP-7's own settings stays as it is: no known message changes it.`:'MIDI clock is off, so takes keep the tempo from the TP-7 settings and its bar jumps will not match the project.';
+  renderTpTempo(); $('#clockNote').textContent=S.tp.clock?`Sends ${S.bpm} bpm as MIDI clock. Tested on 5 Oct: the TP-7 does not take its tempo from it, so you can leave this off.`:'MIDI clock is off. The TP-7 keeps the tempo from its own settings: no known message changes it, so set it by hand if you use its metronome or its own bar jumps. The app\'s bar markers do not depend on it.';
   $('#offOut').textContent=(S.tp.midiOffset>0?'+':'')+S.tp.midiOffset+' ms';
   renderChk();
 }
@@ -2229,8 +2229,8 @@ DIAG.push(
   qs:[['What happened?',REC_OPTS],['Did the red light stay on after the stop?',['Yes','No','It never recorded']]]}
 );
 /* round 11: SysEx transport, then bar markers placed during a playback pass and measured */
-async function runBarcode(){
-  initAudio(); const m=S.tp.startMode;
+async function runBarcode(withCues){
+  initAudio(); const m=S.tp.startMode, id=withCues?'barcodeCues':'barcode';
   if(m!=='sysex'&&m!=='start') return 'Pick SysEx or MIDI start in the TP-7 tab first.';
   if(R.playing||R.take) return 'Stop playback first.';
   const bpm=S.bpm, bar=240/bpm, D=ctx.currentTime+1.5, E=D+8*bar+0.3;
@@ -2238,10 +2238,13 @@ async function runBarcode(){
   const o=ctx.createOscillator(), g=ctx.createGain(); g.gain.value=0.18;
   for(let b=0;b<8;b++){ o.frequency.setValueAtTime(300,D+b*bar); o.frequency.linearRampToValueAtTime(3300,D+(b+1)*bar-0.0005); }
   o.connect(g); g.connect(A.fixed); o.start(D); o.stop(D+8*bar);
+  const cd=(S.tp.takeCueDelay||0)/1000;
+  if(withCues){ midiSend([0xB0,16,127],D-0.2); for(let b=0;b<8;b++){ const t=D+cd+b*bar+(b===0?0.005:0); midiSend([0x90,b,100],t); midiSend([0x80,b,0],t+0.1); } midiSend([0xB0,16,0],E-0.1); }
   tapeStop(m,E); midiSend([0xB0,14,0],E+0.05);
-  S.diag.barcode={at:Date.now(),bpm,passed:false}; save();
-  setDs('barcode',`Recording 8 bars of bar code at ${bpm} bpm…`); await sleep((E-ctx.currentTime)*1000+400);
-  return `Recorded 8 bars at ${bpm} bpm. Each bar is one rising sweep, so any moment in it can be located.`;
+  S.diag.barcode={at:Date.now(),bpm,passed:!!withCues};
+  if(withCues){ S.diag.mpassDelay=S.tp.takeCueDelay; S.diag.mdKind='take'; } save();
+  setDs(id,`Recording 8 bars of bar code at ${bpm} bpm${withCues?', with a cue on each bar':''}…`); await sleep((E-ctx.currentTime)*1000+400);
+  return `Recorded 8 bars at ${bpm} bpm${withCues?`, sending cue record mode and notes 0 to 7 on the bar lines (${S.tp.takeCueDelay} ms delay)`:''}. Each bar is one rising sweep, so any moment in it can be located.`;
 }
 async function runMarkerPass(){
   initAudio(); const bc=S.diag.barcode; if(!bc) return 'Record the bar code take first.';
@@ -2254,7 +2257,7 @@ async function runMarkerPass(){
   midiSend([0xB0,16,0],E); midiSend(sxMsg(SXOP.stop),E+0.05);
   setDs('mpass',`Playing the bar code take and placing cues 0 to 7, one per bar, ${S.tp.mDelay} ms after each bar line is due…`);
   await sleep((E-ctx.currentTime)*1000+500);
-  R.clockMute=false; bc.passed=true; S.diag.mpassDelay=S.tp.mDelay; save(); return `Placed 8 cues with a ${S.tp.mDelay} ms marker delay.`;
+  R.clockMute=false; bc.passed=true; S.diag.mpassDelay=S.tp.mDelay; S.diag.mdKind='pass'; save(); return `Placed 8 cues with a ${S.tp.mDelay} ms marker delay.`;
 }
 // where in the bar code does playback begin? phase counting, like the start sweep, so the tape start-up ramp cannot fool it
 function barcodeErr(x,sr,bar,b){
@@ -2305,7 +2308,7 @@ async function runMarkerCheck(){
   // bar 1 is placed while the tape is still speeding up, so it is reported but left out of the delay estimate
   const later=errs;
   if(later.length){ const sd=[...later].sort((p,q)=>p-q), med=sd[sd.length>>1];
-    L.push(`Bars 2 to 8: median ${med>=0?'+':''}${med.toFixed(1)} ms, range ${sd[0].toFixed(1)} to ${sd[sd.length-1].toFixed(1)} ms, at a ${S.diag.mpassDelay??S.tp.mDelay} ms marker delay. Bar 1 is placed while the tape speeds up, so it is left out.`);
+    L.push(`Bars 2 to 8: median ${med>=0?'+':''}${med.toFixed(1)} ms, range ${sd[0].toFixed(1)} to ${sd[sd.length-1].toFixed(1)} ms, for cues placed ${S.diag.mdKind==='take'?'during the take':'by the marker pass'} with a ${S.diag.mpassDelay??S.tp.mDelay} ms delay.`);
     S.diag.mdSug=Math.round(clamp((S.diag.mpassDelay??S.tp.mDelay)-med,-50,200)); }
   else S.diag.mdSug=null;
   R.clockMute=false; dgExtra('mcheck',L); renderDiag(); return L[L.length-1];
@@ -2315,12 +2318,12 @@ DIAG.push(
   acts:[['Run',async()=>{ if(R.sysex===false) return 'SysEx access was refused. Reconnect MIDI and allow it.'; mNow(sxMsg(SXOP.session)); await sleep(250); mNow(sxMsg(SXOP.play)); await sleep(3000); mNow(sxMsg(SXOP.stop)); return 'Sent Start Session, Play, then Stop 3 s later.'; }]],
   qs:[['What happened?',['Played from the start, then stopped','Played from where it was, then stopped','Played and kept playing','Nothing']]]},
  {id:'barcode',t:'Record a bar code take',how:'MIDI setting cue, cue utility off, start method SysEx. Run records 8 bars in which every bar is one rising sweep. The marker tests use this recording.',
-  acts:[['Run',runBarcode]],qs:[['Did it record about 8 bars?',['Yes','No']]]},
+  acts:[['Run',()=>runBarcode(false)]],qs:[['Did it record about 8 bars?',['Yes','No']]]},
  {id:'mpass',t:'Marker pass',how:()=>`Right after the bar code take, with no cues on it yet. Tap up until CUE shows. Run rewinds to bar 1, plays it with SysEx and places one cue per bar (notes 0 to 7) using a ${S.tp.mDelay} ms marker delay.`,
   acts:[['Run',runMarkerPass]],qs:[['What did the TP-7 do during the pass?',['Rewound, then played the whole take','Played, but not from the start','Did not play']],['How many cues does it have now?',CUE_Q]]},
- {id:'mcheck',t:'Measure the markers',how:'Cue utility still on, TP-7 stopped. Run triggers each cue in turn, captures the playback over USB and works out how far each cue sits from its bar line. If it suggests a new delay, apply it, then repeat all three tests, starting with a fresh bar code take.',
+ {id:'mcheck',t:'Measure the markers',how:'Cue utility on or off (both work), TP-7 stopped. Run triggers each cue in turn, captures the playback over USB and works out how far each cue sits from its bar line. If it suggests a new delay, apply it, then repeat all three tests, starting with a fresh bar code take.',
   acts:[['Run',runMarkerCheck]],qs:[],
-  extra:()=>S.diag.mdSug!=null?`<button type="button" class="btn" data-dact="applyMD" data-v="${S.diag.mdSug}">Use ${S.diag.mdSug} ms as marker delay</button>`:''}
+  extra:()=>S.diag.mdSug!=null?`<button type="button" class="btn" data-dact="applyMD" data-v="${S.diag.mdSug}">Use ${S.diag.mdSug} ms as ${S.diag.mdKind==='take'?'delay for markers set during takes':'marker pass delay'}</button>`:''}
 );
 DIAG.push(
  {id:'sxRew',t:'Rewind with SysEx stop',how:'MIDI setting cue, cue utility off, a recording without cues. Play it to somewhere in the middle and stop it there. Run sends SysEx stop twice (stop while stopped jumps to the start), then plays for 3 s and stops.',
@@ -2412,12 +2415,17 @@ DIAG.push(
   acts:[['Run',async()=>{ const u=S.tp.btn&&S.tp.btn.up; if(!u) return 'Run test 4 first.'; const ch=u.st&15; mNow([0xB0|ch,u.cc,127]); await sleep(150); mNow([0xB0|ch,u.cc,0]); return `Sent CC ${u.cc} = 127, then 0, on channel ${ch+1}.`; }]],
   qs:[['What changed on the TP-7?',['CUE or LOOP turned on or off','Something else changed','Nothing']]]}
 );
+DIAG.push(
+ {id:'barcodeCues',t:'Bar code take with markers set while recording',how:()=>`MIDI setting cue, cue utility off (you can leave it however recording leaves it). Run records 8 bars of bar code and, during the recording, sends cue record mode with notes 0 to 7 on the bar lines (${S.tp.takeCueDelay} ms delay). Afterwards count the cues: tap up until CUE shows, step with + and −, then tap up again to turn it off.`,
+  acts:[['Run',()=>runBarcode(true)]],qs:[['How many cues does it have?',CUE_Q]]},
+ {id:'rewRocker',t:'Rewind with the virtual rocker',how:'Optional. MIDI setting cue, cue utility off, the TP-7 stopped at the end of a recording. Run holds the rocker fully back (CC 18 = 0) for 4 s, centres it (64), then plays 3 s with SysEx and stops.',
+  acts:[['Run',async()=>{ mNow([0xB0,18,0]); setDs('rewRocker','Rocker held back for 4 s…'); await sleep(4000); mNow([0xB0,18,64]); await sleep(500); mNow(sxMsg(SXOP.session)); await sleep(250); mNow(sxMsg(SXOP.play)); await sleep(3000); mNow(sxMsg(SXOP.stop)); return 'Sent rocker back 4 s, centre, then SysEx play for 3 s and stop.'; }]],
+  qs:[['What did the rocker do?',['Rewound to the beginning','Rewound part of the way','Something else','Nothing']],['Where did playback start?',['The beginning','Where the rocker left it','Where it was before','It did not play']]]}
+);
 const DIAG_PLAN=[
-  ['Part 1: can the cue utility stay on, or does it not matter? MIDI setting cue',['cueOnRec','cueOffSet','cueOffTrig']],
-  ['Part 2, optional: can the app press up for you?',['btnMap','btnEmu']],
-  ['Part 3: does each take carry the app’s tempo?',['tempoCarry']],
-  ['Part 4: bar marker timing. A fresh bar code take each time, MIDI setting cue',['barcode','mpass','mcheck']],
-  ['Part 5: the guitar looper',['looper']]
+  ['Part 1: markers set during the take itself, so no marker pass and no CUE switching. MIDI setting cue',['barcodeCues','mcheck']],
+  ['Part 2, optional: rewind without CUE',['rewRocker']],
+  ['Part 3: the guitar looper',['looper']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -2656,7 +2664,7 @@ function bindDiag(){
     if(a==='close'){ root.hidden=true; return; }
     if(a==='copy'){ const txt=diagReport(), ta=$('#dgReport'); ta.value=txt; try{ await navigator.clipboard.writeText(txt); toast('Report copied.'); }catch(err){ ta.focus(); ta.select(); toast('Select all the text in the box and copy it.'); } return; }
     if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
-    if(a==='applyMD'){ S.tp.mDelay=+b.dataset.v; save(); renderDiag(); toast(`Marker delay set to ${S.tp.mDelay} ms.`); return; }
+    if(a==='applyMD'){ if(S.diag.mdKind==='take'){ S.tp.takeCueDelay=+b.dataset.v; toast(`Delay for markers set during takes: ${S.tp.takeCueDelay} ms.`); } else { S.tp.mDelay=+b.dataset.v; toast(`Marker pass delay set to ${S.tp.mDelay} ms.`); } S.diag.mdSug=null; save(); renderDiag(); return; }
     if(a==='apply'){ setOffset(+b.dataset.v); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms for ${offKey()}.`); return; }
     if(a==='run'){
       const t=DIAG.find(x=>x.id===b.dataset.dt), act=t.acts[+b.dataset.ai];
@@ -3122,7 +3130,9 @@ if(S.tp.takeMode==='section') S.tp.takeMode='loop';
 if(!['loop','jam','song'].includes(S.tp.takeMode)) S.tp.takeMode='loop';
 if(!Array.isArray(S.takes)) S.takes=[]; S.diag=Object.assign(defaults().diag,S.diag||{}); ['ans','notes','ran'].forEach(k=>{ if(!S.diag[k]||typeof S.diag[k]!=='object') S.diag[k]={}; }); if(!S.tp.startMode) S.tp.startMode='arm'; if(!S.tp.mig2){ if(S.tp.startMode==='start') S.tp.startMode='arm'; S.tp.clock=false; S.tp.mig2=true; } if(!S.tp.mig3){ if(['arm','beep','rocker'].includes(S.tp.startMode)) S.tp.startMode='start'; S.tp.clock=true; S.tp.mig3=true; }
 if(!S.tp.mig4){ S.tp.clock=false; S.tp.mig4=true; }
+if(S.tp.takeCueDelay==null) S.tp.takeCueDelay=0;
 if(!S.tp.mig8){ S.tp.clock=true; if(S.tp.mDelay==null||S.tp.mDelay===30) S.tp.mDelay=76; S.tp.mig8=true; } // clock gives each take the project tempo; 76 ms measured on 3 Oct
+if(!S.tp.mig9){ S.tp.clock=false; S.tp.mig9=true; } // 5 Oct: takes kept the TP-7's own tempo even with clock and song position
 if(!S.tp.mig7){ if(S.tp.startMode==='start') S.tp.startMode='sysex'; if(S.tp.mDelay==null) S.tp.mDelay=30; S.tp.mig7=true; }
 if(!S.tp.mig6){ S.tp.offsets=Object.assign({'48 kHz, 1 ch':10,'96 kHz, 6 ch':4},S.tp.offsets||{}); S.tp.mig6=true; } // measured on this TP-7, 30 Sep and 1 Oct
 if(S.tp.clock==null) S.tp.clock=false; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
