@@ -1132,7 +1132,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='31 (5 Oct 2026)';
+const APP_BUILD='32 (5 Oct 2026)';
 const SXOP={session:0x40,play:0x50,stop:0x51}; let sxId=0;
 function sxMsg(op){ sxId=sxId%4095+1; return [0xF0,0x00,0x20,0x76,0x19,0x40,0x60|((sxId>>7)&0x1F),sxId&0x7F,0x7F,0x00,op,0xF7]; }
 function tapeArm(m,at){ midiSend([0xB0,14,127],at); if(m==='sysex') midiSend(sxMsg(SXOP.session),at); }
@@ -1626,9 +1626,10 @@ function rvReadout(){
   const c=cueBefore(t), tgt=$('#rvTarget');
   if(WV.play&&WV.play.mode==='tp7') tgt.textContent=`Following the TP-7 from bar ${WV.play.bar+1}. The app counts along; it cannot read the TP-7's position.`;
   else if(R.mpass) tgt.textContent=R.mpass.msg||'Placing bar markers…';
-  else if(!(k.mcues&&k.mcues.length)) tgt.textContent='No TP-7 markers yet. On the TP-7, tap up until CUE shows, then tap Add bar markers. The TP-7 plays the take once while the app places a cue on each bar.';
+  else if(R.mpReady) tgt.textContent='On the TP-7, tap up until CUE shows (the app cannot switch it). Then tap the button again. The TP-7 rewinds and plays the take once while the app places a cue on each bar.';
+  else if(!(k.mcues&&k.mcues.length)) tgt.textContent='No TP-7 markers yet. Tap Add bar markers: the TP-7 plays the take once while the app places a cue on each bar.';
   else if(!c) tgt.textContent='No TP-7 cue marker before this point. Move the playhead later.';
-  else tgt.textContent=`The TP-7 jumps to bar ${c.bar+1} (cue note ${c.note})`+(t-c.t>0.01?`, ${(t-c.t).toFixed(2)} s before the playhead.`:'.')+' Keep the cue utility on.';
+  else tgt.textContent=`The TP-7 jumps to bar ${c.bar+1} (cue note ${c.note})`+(t-c.t>0.01?`, ${(t-c.t).toFixed(2)} s before the playhead.`:'.');
   $('#rvPlayBtn').disabled=!WV.ab;
 }
 function peaksLane(g,pk,rate,start,y,h,W,color){
@@ -1683,7 +1684,13 @@ async function rvMarkerPass(){
   if(R.mpass||R.playing||R.take){ toast('Stop playback first.'); return; }
   if(k.markerPass&&!R.mpAgain){ R.mpAgain=true; setTimeout(()=>R.mpAgain=false,8000);
     toast('This take already has cues on the TP-7. With cues, the TP-7 rewinds to its current cue, not the start, so a new pass would land wrong. Delete them on the TP-7 first, then tap Add bar markers again.'); return; }
-  R.mpAgain=false; initAudio(); stopReview(); R.clockMute=true;
+  R.mpAgain=false;
+  const mb=$('#rvMkBtn');
+  if(!R.mpReady){ R.mpReady=true; if(mb) mb.textContent='CUE is showing: start markers';
+    R.mpass={msg:'On the TP-7, tap up until CUE shows (the app cannot switch it). Then tap the button again. The TP-7 rewinds and plays the take once while the app places a cue on each bar.'}; rvReadout(); R.mpass=null;
+    clearTimeout(R.mpReadyT); R.mpReadyT=setTimeout(()=>{ R.mpReady=false; if(mb) mb.textContent='Add bar markers'; rvReadout(); },45000); return; }
+  R.mpReady=false; clearTimeout(R.mpReadyT); if(mb) mb.textContent='Add bar markers';
+  initAudio(); stopReview(); R.clockMute=true;
   R.mpass={msg:'Rewinding the TP-7 to the start of the take…'}; rvReadout(); await tapeRewind(); R.mpass=null;
   const bd=barDurOf(k), bars=Math.max(1,Math.floor((k.dur+1e-3)/bd)), ev=S.tp.cueEvery;
   const secs=new Set((k.cues||[]).map(c=>Math.round(c.t/bd))), list=[];
@@ -2423,9 +2430,9 @@ DIAG.push(
   qs:[['What did the rocker do?',['Rewound to the beginning','Rewound part of the way','Something else','Nothing']],['Where did playback start?',['The beginning','Where the rocker left it','Where it was before','It did not play']]]}
 );
 const DIAG_PLAN=[
-  ['Part 1: markers set during the take itself, so no marker pass and no CUE switching. MIDI setting cue',['barcodeCues','mcheck']],
-  ['Part 2, optional: rewind without CUE',['rewRocker']],
-  ['Part 3: the guitar looper',['looper']]
+  ['The guitar looper',['looper']],
+  ['Marker timing check, when needed: a fresh bar code take, then the pass with CUE on, then measure',['barcode','mpass','mcheck']],
+  ['TP-7 tempo readout (MIDI setting sync)',['tpRead']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -3133,6 +3140,7 @@ if(!S.tp.mig4){ S.tp.clock=false; S.tp.mig4=true; }
 if(S.tp.takeCueDelay==null) S.tp.takeCueDelay=0;
 if(!S.tp.mig8){ S.tp.clock=true; if(S.tp.mDelay==null||S.tp.mDelay===30) S.tp.mDelay=76; S.tp.mig8=true; } // clock gives each take the project tempo; 76 ms measured on 3 Oct
 if(!S.tp.mig9){ S.tp.clock=false; S.tp.mig9=true; } // 5 Oct: takes kept the TP-7's own tempo even with clock and song position
+if(!S.tp.mig10){ if(S.tp.mDelay===76) S.tp.mDelay=79; S.tp.mig10=true; } // 5 Oct: median 3.3 ms early at 76 ms
 if(!S.tp.mig7){ if(S.tp.startMode==='start') S.tp.startMode='sysex'; if(S.tp.mDelay==null) S.tp.mDelay=30; S.tp.mig7=true; }
 if(!S.tp.mig6){ S.tp.offsets=Object.assign({'48 kHz, 1 ch':10,'96 kHz, 6 ch':4},S.tp.offsets||{}); S.tp.mig6=true; } // measured on this TP-7, 30 Sep and 1 Oct
 if(S.tp.clock==null) S.tp.clock=false; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
