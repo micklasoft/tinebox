@@ -161,6 +161,8 @@ input[type=range]{width:100%;accent-color:var(--ink);margin:0}
 .opts .more svg{width:20px;height:20px}
 .pop{position:fixed;z-index:45;right:calc(14px + env(safe-area-inset-right,0px));bottom:calc(64px + env(safe-area-inset-bottom,0px));width:min(290px,calc(100vw - 28px));
   background:var(--panel);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;box-shadow:0 12px 32px rgba(0,0,0,.22),0 0 0 1px var(--line)}
+.lp-meter{flex:1;height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink) 12%,transparent);overflow:hidden}
+.lp-meter i{display:block;height:100%;width:0;background:var(--go);transition:width .08s linear}
 .pop .pl{flex:none;min-width:58px;font-size:14px;color:var(--ink-2)}
 .pop .orow2 .tog{height:34px}
 
@@ -1132,7 +1134,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='32 (5 Oct 2026)';
+const APP_BUILD='34 (5 Oct 2026)';
 const SXOP={session:0x40,play:0x50,stop:0x51}; let sxId=0;
 function sxMsg(op){ sxId=sxId%4095+1; return [0xF0,0x00,0x20,0x76,0x19,0x40,0x60|((sxId>>7)&0x1F),sxId&0x7F,0x7F,0x00,op,0xF7]; }
 function tapeArm(m,at){ midiSend([0xB0,14,127],at); if(m==='sysex') midiSend(sxMsg(SXOP.session),at); }
@@ -1626,8 +1628,7 @@ function rvReadout(){
   const c=cueBefore(t), tgt=$('#rvTarget');
   if(WV.play&&WV.play.mode==='tp7') tgt.textContent=`Following the TP-7 from bar ${WV.play.bar+1}. The app counts along; it cannot read the TP-7's position.`;
   else if(R.mpass) tgt.textContent=R.mpass.msg||'Placing bar markers…';
-  else if(R.mpReady) tgt.textContent='On the TP-7, tap up until CUE shows (the app cannot switch it). Then tap the button again. The TP-7 rewinds and plays the take once while the app places a cue on each bar.';
-  else if(!(k.mcues&&k.mcues.length)) tgt.textContent='No TP-7 markers yet. Tap Add bar markers: the TP-7 plays the take once while the app places a cue on each bar.';
+  else if(!(k.mcues&&k.mcues.length)) tgt.textContent='No TP-7 markers yet. Tap Add bar markers: the TP-7 rewinds and plays the take once while the app places a cue on each bar. If it does not start from the beginning, tap up until CUE shows on the TP-7 and try again.';
   else if(!c) tgt.textContent='No TP-7 cue marker before this point. Move the playhead later.';
   else tgt.textContent=`The TP-7 jumps to bar ${c.bar+1} (cue note ${c.note})`+(t-c.t>0.01?`, ${(t-c.t).toFixed(2)} s before the playhead.`:'.');
   $('#rvPlayBtn').disabled=!WV.ab;
@@ -1685,11 +1686,6 @@ async function rvMarkerPass(){
   if(k.markerPass&&!R.mpAgain){ R.mpAgain=true; setTimeout(()=>R.mpAgain=false,8000);
     toast('This take already has cues on the TP-7. With cues, the TP-7 rewinds to its current cue, not the start, so a new pass would land wrong. Delete them on the TP-7 first, then tap Add bar markers again.'); return; }
   R.mpAgain=false;
-  const mb=$('#rvMkBtn');
-  if(!R.mpReady){ R.mpReady=true; if(mb) mb.textContent='CUE is showing: start markers';
-    R.mpass={msg:'On the TP-7, tap up until CUE shows (the app cannot switch it). Then tap the button again. The TP-7 rewinds and plays the take once while the app places a cue on each bar.'}; rvReadout(); R.mpass=null;
-    clearTimeout(R.mpReadyT); R.mpReadyT=setTimeout(()=>{ R.mpReady=false; if(mb) mb.textContent='Add bar markers'; rvReadout(); },45000); return; }
-  R.mpReady=false; clearTimeout(R.mpReadyT); if(mb) mb.textContent='Add bar markers';
   initAudio(); stopReview(); R.clockMute=true;
   R.mpass={msg:'Rewinding the TP-7 to the start of the take…'}; rvReadout(); await tapeRewind(); R.mpass=null;
   const bd=barDurOf(k), bars=Math.max(1,Math.floor((k.dur+1e-3)/bd)), ev=S.tp.cueEvery;
@@ -2074,7 +2070,7 @@ DIAG.push(
         ['D: rec CC + note',async()=>{ mNow([0xB0,14,127]); await sleep(150); noteOnOff(65); await sleep(200); mNow([0xB0,14,0]); return 'D sent: rec on, note 65, rec off.'; }],
         ['Recall all',async()=>{ for(const n of [60,62,64,65]){ setDs('cuemx',`Recall: note ${n}…`); noteOnOff(n); await sleep(2500); } return 'Recall sent notes 60, 62, 64 and 65, 2.5 s apart.'; }]],
   qs:[['Did A leave a marker?',['Yes','No','Not sure']],['Did B?',['Yes','No','Not sure']],['Did C?',['Yes','No','Not sure']],['Did D?',['Yes','No','Not sure']],['What did Recall all do?',['Jumped on every note','Jumped on some notes','No jumps']]]},
- {id:'looper',t:'Guitar looper',nomidi:true,how:'Close this screen. Tap the loop button in the top bar, then Measure (if it asks, play a muted strum on each click). Record a 2-bar loop over the demo, play along for a while, then come back here.',
+ {id:'looper',t:'Guitar looper',nomidi:true,how:'After test 1. Close this screen. Tap the loop button in the top bar and check that the meter moves when you play. Then tap Measure (if it asks, play a muted strum on each click). Record a 2-bar loop over the demo, play along for a while, then come back here.',
   acts:[],
   qs:[['How did Measure find the latency?',['From the app’s own sound','From my strums','It failed']],['Does the loop sit in time with the drums?',['Tight','A little late','A little early','Clearly off']],['How does the loop point sound?',['Seamless','Small click','Gap']]]}
 );
@@ -2237,7 +2233,7 @@ DIAG.push(
 );
 /* round 11: SysEx transport, then bar markers placed during a playback pass and measured */
 async function runBarcode(withCues){
-  initAudio(); const m=S.tp.startMode, id=withCues?'barcodeCues':'barcode';
+  initAudio(); const m=S.tp.startMode, id=withCues==='toggle'?'barcodeCues2':withCues?'barcodeCues':'barcode';
   if(m!=='sysex'&&m!=='start') return 'Pick SysEx or MIDI start in the TP-7 tab first.';
   if(R.playing||R.take) return 'Stop playback first.';
   const bpm=S.bpm, bar=240/bpm, D=ctx.currentTime+1.5, E=D+8*bar+0.3;
@@ -2246,7 +2242,8 @@ async function runBarcode(withCues){
   for(let b=0;b<8;b++){ o.frequency.setValueAtTime(300,D+b*bar); o.frequency.linearRampToValueAtTime(3300,D+(b+1)*bar-0.0005); }
   o.connect(g); g.connect(A.fixed); o.start(D); o.stop(D+8*bar);
   const cd=(S.tp.takeCueDelay||0)/1000;
-  if(withCues){ midiSend([0xB0,16,127],D-0.2); for(let b=0;b<8;b++){ const t=D+cd+b*bar+(b===0?0.005:0); midiSend([0x90,b,100],t); midiSend([0x80,b,0],t+0.1); } midiSend([0xB0,16,0],E-0.1); }
+  if(withCues==='toggle'){ for(let b=0;b<8;b++){ const t=D+cd+b*bar+(b===0?0.3:0); midiSend([0xB0,16,127],t-0.06); midiSend([0x90,b,100],t); midiSend([0x80,b,0],t+0.1); midiSend([0xB0,16,0],t+0.16); } }
+  else if(withCues){ midiSend([0xB0,16,127],D-0.2); for(let b=0;b<8;b++){ const t=D+cd+b*bar+(b===0?0.005:0); midiSend([0x90,b,100],t); midiSend([0x80,b,0],t+0.1); } midiSend([0xB0,16,0],E-0.1); }
   tapeStop(m,E); midiSend([0xB0,14,0],E+0.05);
   S.diag.barcode={at:Date.now(),bpm,passed:!!withCues};
   if(withCues){ S.diag.mpassDelay=S.tp.takeCueDelay; S.diag.mdKind='take'; } save();
@@ -2429,10 +2426,17 @@ DIAG.push(
   acts:[['Run',async()=>{ mNow([0xB0,18,0]); setDs('rewRocker','Rocker held back for 4 s…'); await sleep(4000); mNow([0xB0,18,64]); await sleep(500); mNow(sxMsg(SXOP.session)); await sleep(250); mNow(sxMsg(SXOP.play)); await sleep(3000); mNow(sxMsg(SXOP.stop)); return 'Sent rocker back 4 s, centre, then SysEx play for 3 s and stop.'; }]],
   qs:[['What did the rocker do?',['Rewound to the beginning','Rewound part of the way','Something else','Nothing']],['Where did playback start?',['The beginning','Where the rocker left it','Where it was before','It did not play']]]}
 );
+DIAG.push(
+ {id:'inScan',t:'Find the guitar input',nomidi:true,how:'Guitar plugged into the TP-7 line input, app stopped. Run first plays clicks while you mute the strings, then asks you to play for 4 s. It shows which inputs carry what and points the looper at the guitar.',
+  acts:[['Run',runInScan]],qs:[]}
+);
+DIAG.push(
+ {id:'barcodeCues2',t:'Markers while recording, second try',how:()=>`MIDI setting cue, cue utility off. Run records 8 bars of bar code and, after the recording has started, switches cue record mode on and off around each marker note (notes 0 to 7, one per bar). Afterwards, tap up until CUE shows and count the cues with + and −, then tap up again.`,
+  acts:[['Run',()=>runBarcode('toggle')]],qs:[['How many cues does it have?',CUE_Q]]}
+);
 const DIAG_PLAN=[
-  ['The guitar looper',['looper']],
-  ['Marker timing check, when needed: a fresh bar code take, then the pass with CUE on, then measure',['barcode','mpass','mcheck']],
-  ['TP-7 tempo readout (MIDI setting sync)',['tpRead']]
+  ['Part 1, the main goal: get the guitar into the looper',['inScan','looper']],
+  ['Part 2: one more try at markers during recording. If cues appear, run the measure test right after',['barcodeCues2','mcheck']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -2697,13 +2701,48 @@ async function lpOpenInput(){
   if(LP.stream) return true;
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ toast('This browser offers no audio input.'); return false; }
   try{ if(navigator.audioSession) navigator.audioSession.type='play-and-record'; }catch(e){}
-  try{ LP.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:2}}); }
+  try{ LP.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:{ideal:8}}}); }
   catch(e){ try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(x){} toast('Audio input was blocked ('+e.name+').'); return false; }
-  const src=ctx.createMediaStreamSource(LP.stream), z=ctx.createGain(); z.gain.value=0; LP.sp=ctx.createScriptProcessor(2048,2,2);
-  LP.sp.onaudioprocess=e=>{ if(!LP.cap) return; const ib=e.inputBuffer, a=ib.getChannelData(0), b=ib.numberOfChannels>1?ib.getChannelData(1):a;
+  const tr=LP.stream.getAudioTracks()[0], st=tr&&tr.getSettings?tr.getSettings():{};
+  LP.nch=Math.max(1,Math.min(8,st.channelCount||2));
+  const src=ctx.createMediaStreamSource(LP.stream), z=ctx.createGain(); z.gain.value=0; LP.sp=ctx.createScriptProcessor(2048,Math.max(2,LP.nch),2);
+  LP.sp.channelCountMode='explicit'; LP.sp.channelInterpretation='discrete';
+  LP.sp.onaudioprocess=e=>{ const ib=e.inputBuffer, n=Math.min(ib.numberOfChannels,LP.nch), pk=LP.pk||(LP.pk=new Float32Array(8));
+    for(let c=0;c<n;c++){ const d=ib.getChannelData(c); let m=0; for(let i=0;i<d.length;i+=2){ const v=Math.abs(d[i]); if(v>m) m=v; } pk[c]=Math.max(m,pk[c]*0.85); if(LP.scan) LP.scan[c]=Math.max(LP.scan[c],m); }
+    if(!LP.cap) return; const ch=S.looper.chans||[0,1], a=ib.getChannelData(Math.min(ch[0],n-1)), b=ib.getChannelData(Math.min(ch[1]??ch[0],n-1));
     LP.cap.push({t:e.playbackTime!=null?e.playbackTime:ctx.currentTime,l:new Float32Array(a),r:new Float32Array(b)}); if(LP.cap.length>LP.capMax) LP.cap.shift(); };
   src.connect(LP.sp); LP.sp.connect(z); z.connect(ctx.destination);
   return true;
+}
+function lpRenderIn(){
+  const sel=$('#lpIn'); if(!sel) return; const n=LP.nch||2, cur=(S.looper.chans||[0,1]).join(','); let h='';
+  for(let c=0;c<n;c+=2){ const c2=Math.min(c+1,n-1), v=`${c},${c2}`; h+=`<option value="${v}"${v===cur?' selected':''}>Input ${c+1}${c2!==c?'–'+(c2+1):''}</option>`; }
+  if(n===1) h=`<option value="0,0" selected>Input 1</option>`;
+  sel.innerHTML=h; sel.onchange=()=>{ S.looper.chans=sel.value.split(',').map(Number); save(); };
+}
+function lpMeterRun(){
+  clearInterval(LP.mIv); LP.mIv=setInterval(()=>{ const p=$('#loopPop'), m=$('#lpMeter'); if(!p||p.hidden||!m){ clearInterval(LP.mIv); return; }
+    const ch=S.looper.chans||[0,1], pk=LP.pk||[], v=Math.max(pk[ch[0]]||0,pk[ch[1]??ch[0]]||0), db=v>0?20*Math.log10(v):-120;
+    m.style.width=`${clamp((db+60)/60,0,1)*100}%`; },80);
+}
+async function runInScan(){
+  initAudio(); if(!(await lpOpenInput())) return 'Audio input was blocked.';
+  if(R.playing) return 'Stop playback first.';
+  const n=LP.nch||2, db=v=>v>0?20*Math.log10(v):-120;
+  LP.scan=new Array(8).fill(0); setDs('inScan','Step 1 of 2: mute the strings. The app plays clicks for 3 s…');
+  const t=ctx.currentTime+0.2; for(let i=0;i<6;i++) calClick(t+i*0.5,i===0); await sleep(3400);
+  const app=LP.scan.slice(0,n); LP.scan=new Array(8).fill(0);
+  setDs('inScan','Step 2 of 2: play the guitar now, for 4 s…'); await sleep(4000);
+  const gtr=LP.scan.slice(0,n); LP.scan=null;
+  const L=[`The TP-7 sends ${n} input channel${n>1?'s':''} to the app.`];
+  for(let c=0;c<n;c++) L.push(`Input ${c+1}: app sound ${db(app[c]).toFixed(0)} dBFS, guitar ${db(gtr[c]).toFixed(0)} dBFS.`);
+  let best=null, sc=-1e9;
+  for(let c=0;c<n;c+=2){ const c2=Math.min(c+1,n-1), g=Math.max(db(gtr[c]),db(gtr[c2])), a=Math.max(db(app[c]),db(app[c2])), v=g-Math.max(a,-70);
+    if(g>-50&&v>sc){ sc=v; best=[c,c2]; } }
+  if(best){ S.looper.chans=best; save(); lpRenderIn(); const a=Math.max(db(app[best[0]]),db(app[best[1]]));
+    L.push(`The looper now records input ${best[0]+1}${best[1]!==best[0]?'–'+(best[1]+1):''}.`+(a>-40?' Those channels also carry the app’s own sound, so loops will include it.':'')); }
+  else L.push('No input carried the guitar. Check that it is plugged into the TP-7 line input and that the TP-7 input level is up.');
+  dgExtra('inScan',L); return L[L.length-1];
 }
 function lpStartCap(secs){ LP.capMax=Math.ceil(secs*ctx.sampleRate/2048)+8; LP.cap=[]; }
 // block timestamps jitter by a few render quanta, but the samples arrive without gaps:
@@ -2739,7 +2778,7 @@ async function lpRecord(){
   let pk=0; for(let i=0;i<seg[0].length;i+=4) pk=Math.max(pk,Math.abs(seg[0][i]),Math.abs(seg[1][i]));
   LP.buf=ab; LP.steps=steps; LP.phase=target%steps; LP.bpm=S.bpm; LP.rec=null;
   // the first pass starts at the next loop boundary the scheduler has not reached yet
-  lpRender(); toast(pk<0.003?'The loop is nearly silent. Check the TP-7 input level.':`Loop recorded: ${S.looper.bars} bar${S.looper.bars>1?'s':''}. It plays whenever the transport runs.`);
+  lpRender(); toast(pk<0.003?'The loop came in nearly silent. In the looper, check that the meter moves when you play, and try another Input if it does not (or run Find the guitar input in the diagnostics).':`Loop recorded: ${S.looper.bars} bar${S.looper.bars>1?'s':''}. It plays whenever the transport runs.`);
 }
 function lpClear(){ lpStopVoices(ctx?ctx.currentTime:0); LP.buf=null; lpRender(); toast('Loop cleared.'); }
 async function lpMeasure(){
@@ -2770,6 +2809,7 @@ function lpBuild(){
     ${segH('looper.bars',[[1,'1 bar'],[2,'2 bars'],[4,'4 bars']])}
     <button type="button" class="take" id="lpRecBtn" data-act="lpRec">Record loop</button>
     <div class="orow2">${togH('looper.muted','Mute')}<input type="range" data-k="looper.level" min="0" max="1" step="0.01" aria-label="Loop level" class="lp-level"><button type="button" class="btn" data-act="lpClear">Clear</button></div>
+    <div class="orow2"><select class="msel" id="lpIn" aria-label="Looper input channels"></select><span class="lp-meter" aria-hidden="true"><i id="lpMeter"></i></span></div>
     <div class="orow2"><span class="lp-lat" id="lpLat"></span><button type="button" class="btn sm" data-act="lpLat-" aria-label="Latency 5 ms shorter">−</button><button type="button" class="btn sm" data-act="lpLat+" aria-label="Latency 5 ms longer">+</button><button type="button" class="btn sm" data-act="lpMeasure">Measure</button></div>
   </div>`);
 }
@@ -2975,7 +3015,7 @@ function doAct(a,el){
     case 'mRecOn': if(!midiReady()) toast('Connect MIDI first.'); midiSend([0xB0,14,127]); break;
     case 'mRecOff': if(!midiReady()) toast('Connect MIDI first.'); midiSend([0xB0,14,0]); break;
     case 'more': { const pop=$('#morePop'), open=pop.hidden; pop.hidden=!open; el.setAttribute('aria-expanded',String(open)); break; }
-    case 'loopPop': { const p=$('#loopPop'), open=p.hidden; p.hidden=!open; el.setAttribute('aria-expanded',String(open)); if(open) lpRender(); break; }
+    case 'loopPop': { const p=$('#loopPop'), open=p.hidden; p.hidden=!open; el.setAttribute('aria-expanded',String(open)); if(open){ lpRender(); initAudio(); lpOpenInput().then(ok=>{ if(ok) lpRenderIn(); }); lpMeterRun(); } break; }
     case 'lpRec': lpRecord(); break;
     case 'lpClear': lpClear(); break;
     case 'lpMeasure': lpMeasure(); break;

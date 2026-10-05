@@ -1,5 +1,5 @@
 // Tinebox offline cache. Change VERSION whenever you upload a new index.html.
-const VERSION = 'tinebox-32';
+const VERSION = 'tinebox-34';
 const SHELL = ['./', './index.html', './manifest.webmanifest', './icon-180.png', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', e => {
