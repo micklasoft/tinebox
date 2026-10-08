@@ -161,6 +161,7 @@ input[type=range]{width:100%;accent-color:var(--ink);margin:0}
 .opts .more svg{width:20px;height:20px}
 .pop{position:fixed;z-index:45;right:calc(14px + env(safe-area-inset-right,0px));bottom:calc(64px + env(safe-area-inset-bottom,0px));width:min(290px,calc(100vw - 28px));
   background:var(--panel);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;box-shadow:0 12px 32px rgba(0,0,0,.22),0 0 0 1px var(--line)}
+.lp-note{margin:0;font-size:12px}
 .lp-meter{flex:1;height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink) 12%,transparent);overflow:hidden}
 .lp-meter i{display:block;height:100%;width:0;background:var(--go);transition:width .08s linear}
 .pop .pl{flex:none;min-width:58px;font-size:14px;color:var(--ink-2)}
@@ -1041,6 +1042,7 @@ function finishTake(t){
     R.lastMode=sm;
     stopCapture(tk.rec||null,tk.z,tk.mark); if(tk.rec){ save(); renderCues(); }
     R.lastTake=tk.n||0; R.take=null; releaseWake(); renderTransport();
+    if(tk.rec&&S.tp.autoMarkers&&sm==='sysex'&&R.sysex===true&&midiReady()) setTimeout(()=>{ if(!R.take&&!R.mpass) rvMarkerPass(tk.rec,true); },1200);
   },wait*1000);
   renderTransport();
 }
@@ -1067,6 +1069,7 @@ function startHint(phase,mode){
 }
 function takeState(now){
   const tk=R.take;
+  if(R.mpass&&R.mpass.auto) return {big:'Adding bar markers',small:R.mpass.msg||'',rec:false};
   if(!tk){
     if(R.lastTake) return {big:`Take ${R.lastTake} saved`,small:(R.lastMode&&R.lastMode!=='manual')?'The app sent stop to the TP-7. Check that it stopped.':'Stop recording on the TP-7.',rec:false};
     return {big:'Ready',small:startHint('ready'),rec:false};
@@ -1134,13 +1137,13 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='34 (5 Oct 2026)';
+const APP_BUILD='35 (8 Oct 2026)';
 const SXOP={session:0x40,play:0x50,stop:0x51}; let sxId=0;
 function sxMsg(op){ sxId=sxId%4095+1; return [0xF0,0x00,0x20,0x76,0x19,0x40,0x60|((sxId>>7)&0x1F),sxId&0x7F,0x7F,0x00,op,0xF7]; }
 function tapeArm(m,at){ midiSend([0xB0,14,127],at); if(m==='sysex') midiSend(sxMsg(SXOP.session),at); }
 function tapeStart(m,at){ if(m==='start') midiSend([0xFA],at); else if(m==='rocker') midiSend([0xB0,18,68],at); else if(m==='sysex') midiSend(sxMsg(SXOP.play),at); }
 function tapeStop(m,at){ if(m==='start'||m==='arm') midiSend([0xFC],at); else if(m==='rocker') midiSend([0xB0,18,64],at); else if(m==='sysex') midiSend(sxMsg(SXOP.stop),at); }
-async function tapeRewind(){ if(S.tp.startMode!=='sysex') return; mNow(sxMsg(SXOP.stop)); await sleep(250); mNow(sxMsg(SXOP.stop)); await sleep(400); }
+async function tapeRewind(){ if(S.tp.startMode!=='sysex') return; mNow([0xB0,14,0]); LP.armed=false; mNow(sxMsg(SXOP.stop)); await sleep(250); mNow(sxMsg(SXOP.stop)); await sleep(400); }
 function playNow(){ if(S.tp.startMode==='sysex'){ mNow(sxMsg(SXOP.session)); mNow(sxMsg(SXOP.play)); } else mNow([0xFA]); }
 function stopNow(){ if(S.tp.startMode==='sysex') mNow(sxMsg(SXOP.stop)); else mNow([0xFC]); }
 function testStart(){
@@ -1352,7 +1355,7 @@ function buildPanels(){
   <div class="orow"><span class="lbl">Start recording</span>${segH('tp.startMode',[['sysex','SysEx'],['start','MIDI start'],['arm','Arm, you start'],['manual','By hand']])}</div>
   <p class="note" id="startNote"></p>
   <div class="orow"><button type="button" class="btn" data-act="testStart">Test: record 4 s</button><button type="button" class="btn" data-act="diag">Run TP-7 diagnostics</button></div>
-  <div class="orow">${togH('tp.clock','Send tempo as MIDI clock')}${togH('tp.midiCue','Set cue markers')}</div>
+  <div class="orow">${togH('tp.autoMarkers','Add bar markers after each take')}${togH('tp.clock','Send tempo as MIDI clock')}</div>
   <p class="note" id="clockNote"></p>
   <p class="note" id="tpTempoNote"></p><button type="button" class="btn" data-act="tpMatch" id="tpMatchBtn" hidden>Use the TP-7 tempo</button>
   <h3>Before you record<small id="chkCount"></small></h3>
@@ -1416,7 +1419,8 @@ function renderTransport(){
   bp.setAttribute('aria-label',R.playing?'Stop':'Play');
   $('#btnRec').setAttribute('aria-pressed',String(R.recArmed));
   const tb=$('#takeBtn');
-  if(tb){ tb.textContent=!R.take?'Start take':R.take.phase==='tail'?'Finishing…':'End take'; tb.classList.toggle('live',!!R.take); tb.disabled=!!(R.take&&R.take.phase==='tail'); }
+  if(tb&&R.mpass&&R.mpass.auto&&!R.take){ tb.textContent='Stop markers'; tb.classList.remove('live'); tb.disabled=false; }
+  else if(tb){ tb.textContent=!R.take?'Start take':R.take.phase==='tail'?'Finishing…':'End take'; tb.classList.toggle('live',!!R.take); tb.disabled=!!(R.take&&R.take.phase==='tail'); }
   $('#sTake').hidden=!R.take;
 }
 function renderSecs(){
@@ -1488,7 +1492,7 @@ function renderCues(){
 }
 const CHECK=[
   {id:'cable',t:()=>'Connect the iPhone to the TP-7 with a USB-C cable.'},
-  {id:'source',t:()=>'On the TP-7, set the source to manual: USB on track 1, the guitar jack on track 2. Takes need the USB input recorded, or the app is missing from them.'},
+  {id:'source',t:()=>'On the TP-7, set the record sources to line 1 and USB 1, once. The app cannot change them. It arms the TP-7 itself whenever the looper needs to hear the guitar.'},
   {id:'guitar',t:()=>'Run the guitar through a DI box, preamp or pedal with a line out. The TP-7 input is 9.5 kΩ, too low for a passive guitar.'},
   {id:'autooff',t:()=>'Turn off auto start and count-in in the TP-7 record settings. Auto start shows a T next to REC and blocks MIDI start, and count-in can shift where the recording begins.'},
   {id:'tempo',t:()=>`Optional: set the TP-7 record tempo to ${S.bpm} bpm by hand if you use its metronome or its own bar jumps. The app cannot set it (tested on 5 Oct), and its bar markers work at any TP-7 tempo. Keep the count-in off.`},
@@ -1678,16 +1682,17 @@ function rvLoop(){
 }
 /* marker pass: the TP-7 cannot take cues while recording, so after a take the app plays it once (SysEx)
    and places one cue per bar (or per N bars / section) with cue record mode, notes 0 to 127 */
-async function rvMarkerPass(){
-  const k=WV.k; if(!k) return;
+function mpUi(k){ if(WV.k===k&&!$('#review').hidden) rvReadout(); R.tkAt=0; renderTransport(); }
+async function rvMarkerPass(kArg,auto){
+  const k=kArg||WV.k; if(!k) return;
   if(S.tp.startMode!=='sysex'||R.sysex!==true){ toast('Bar markers need the SysEx start method, with SysEx allowed when connecting MIDI.'); return; }
   if(!midiReady()){ toast('Connect MIDI first: TP-7 tab, More, Connect MIDI.'); return; }
-  if(R.mpass||R.playing||R.take){ toast('Stop playback first.'); return; }
-  if(k.markerPass&&!R.mpAgain){ R.mpAgain=true; setTimeout(()=>R.mpAgain=false,8000);
+  if(R.mpass||R.playing||R.take){ toast(auto?'Bar markers skipped because playback is running. Add them later in the take review.':'Stop playback first.'); return; }
+  if(k.markerPass&&!auto&&!R.mpAgain){ R.mpAgain=true; setTimeout(()=>R.mpAgain=false,8000);
     toast('This take already has cues on the TP-7. With cues, the TP-7 rewinds to its current cue, not the start, so a new pass would land wrong. Delete them on the TP-7 first, then tap Add bar markers again.'); return; }
   R.mpAgain=false;
   initAudio(); stopReview(); R.clockMute=true;
-  R.mpass={msg:'Rewinding the TP-7 to the start of the take…'}; rvReadout(); await tapeRewind(); R.mpass=null;
+  R.mpass={k,auto:!!auto,msg:'Rewinding the TP-7 to the start of the take…'}; mpUi(k); await tapeRewind(); R.mpass=null;
   const bd=barDurOf(k), bars=Math.max(1,Math.floor((k.dur+1e-3)/bd)), ev=S.tp.cueEvery;
   const secs=new Set((k.cues||[]).map(c=>Math.round(c.t/bd))), list=[];
   for(let b=0;b<bars&&list.length<128;b++) if(ev==='section'?secs.has(b)||b===0:b%(+ev||1)===0) list.push(b);
@@ -1695,20 +1700,20 @@ async function rvMarkerPass(){
   midiSend(sxMsg(SXOP.session),T-0.25); midiSend(sxMsg(SXOP.play),T); midiSend([0xB0,16,127],T+0.01);
   list.forEach((b,i)=>{ const t=b===0?T+0.02:T+d+b*bd; midiSend([0x90,i,100],t); midiSend([0x80,i,0],t+0.1); mc.push({t:b*bd,note:i,bar:b}); });
   midiSend([0xB0,16,0],E); midiSend(sxMsg(SXOP.stop),E+0.05);
-  const mp=R.mpass={k,mc,T,E,bd,bars};
+  const mp=R.mpass={k,mc,T,E,bd,bars,auto:!!auto};
   mp.iv=setInterval(()=>{
     if(R.mpass!==mp) return clearInterval(mp.iv);
     const now=ctx.currentTime;
-    if(now<E+0.2){ const b=Math.min(bars,Math.max(1,Math.floor((now-T)/bd)+1)); mp.msg=`Placing bar markers: bar ${b} of ${bars}. Let the TP-7 play; tap Stop to cancel.`; WV.pos=Math.max(0,Math.min(k.dur,now-T)); WV.dirty=true; rvReadout(); return; }
-    clearInterval(mp.iv); R.mpass=null; R.clockMute=false; k.mcues=mc; k.markerPass={at:Date.now(),delay:S.tp.mDelay,n:mc.length}; save(); WV.dirty=true; rvReadout();
-    toast(`Placed ${mc.length} markers. Move the playhead and tap Jump TP-7 here.`);
+    if(now<E+0.2){ const b=Math.min(bars,Math.max(1,Math.floor((now-T)/bd)+1)); mp.msg=`Placing bar markers: bar ${b} of ${bars}. Let the TP-7 play; tap ${auto?'Stop markers':'Stop'} to cancel.`; if(WV.k===k){ WV.pos=Math.max(0,Math.min(k.dur,now-T)); WV.dirty=true; } mpUi(k); return; }
+    clearInterval(mp.iv); R.mpass=null; R.clockMute=false; k.mcues=mc; k.markerPass={at:Date.now(),delay:S.tp.mDelay,n:mc.length}; save(); if(WV.k===k) WV.dirty=true; mpUi(k);
+    toast(`Take ${k.n}: placed ${mc.length} bar markers on the TP-7. Open the take to jump to any bar.`);
   },250);
-  rvReadout();
+  mpUi(k);
 }
 function cancelMarkerPass(){
   const mp=R.mpass; if(!mp) return; clearInterval(mp.iv); R.mpass=null; R.mq=[]; R.clockMute=false;
   try{ const o=R.midi&&R.midi.outputs.get(R.midiOutId); if(o&&o.clear) o.clear(); }catch(e){}
-  mNow([0xB0,16,0]); mNow(sxMsg(SXOP.stop)); toast('Marker pass stopped. The take keeps its earlier markers, if any.'); rvReadout();
+  mNow([0xB0,16,0]); mNow(sxMsg(SXOP.stop)); toast('Marker pass stopped. The take keeps its earlier markers, if any.'); mpUi(mp.k);
 }
 function rvJump(){
   const k=WV.k, c=cueBefore(WV.pos);
@@ -2070,7 +2075,7 @@ DIAG.push(
         ['D: rec CC + note',async()=>{ mNow([0xB0,14,127]); await sleep(150); noteOnOff(65); await sleep(200); mNow([0xB0,14,0]); return 'D sent: rec on, note 65, rec off.'; }],
         ['Recall all',async()=>{ for(const n of [60,62,64,65]){ setDs('cuemx',`Recall: note ${n}…`); noteOnOff(n); await sleep(2500); } return 'Recall sent notes 60, 62, 64 and 65, 2.5 s apart.'; }]],
   qs:[['Did A leave a marker?',['Yes','No','Not sure']],['Did B?',['Yes','No','Not sure']],['Did C?',['Yes','No','Not sure']],['Did D?',['Yes','No','Not sure']],['What did Recall all do?',['Jumped on every note','Jumped on some notes','No jumps']]]},
- {id:'looper',t:'Guitar looper',nomidi:true,how:'After test 1. Close this screen. Tap the loop button in the top bar and check that the meter moves when you play. Then tap Measure (if it asks, play a muted strum on each click). Record a 2-bar loop over the demo, play along for a while, then come back here.',
+ {id:'looper',t:'Guitar looper',nomidi:true,how:'After test 1. Close this screen. Tap the loop button in the top bar: the app arms the TP-7 and the meter should move when you play. Then tap Measure (if it asks, play a muted strum on each click). Record a 2-bar loop over the demo, play along for a while, then come back here.',
   acts:[],
   qs:[['How did Measure find the latency?',['From the app’s own sound','From my strums','It failed']],['Does the loop sit in time with the drums?',['Tight','A little late','A little early','Clearly off']],['How does the loop point sound?',['Seamless','Small click','Gap']]]}
 );
@@ -2427,16 +2432,21 @@ DIAG.push(
   qs:[['What did the rocker do?',['Rewound to the beginning','Rewound part of the way','Something else','Nothing']],['Where did playback start?',['The beginning','Where the rocker left it','Where it was before','It did not play']]]}
 );
 DIAG.push(
- {id:'inScan',t:'Find the guitar input',nomidi:true,how:'Guitar plugged into the TP-7 line input, app stopped. Run first plays clicks while you mute the strings, then asks you to play for 4 s. It shows which inputs carry what and points the looper at the guitar.',
+ {id:'inScan',t:'Find the guitar input',nomidi:true,how:'Guitar plugged into the TP-7 line input, record sources line 1 and USB 1, app stopped. The app arms the TP-7 itself. Run first plays clicks while you mute the strings, then asks you to play for 4 s. It shows which inputs carry what and points the looper at the guitar.',
   acts:[['Run',runInScan]],qs:[]}
 );
 DIAG.push(
  {id:'barcodeCues2',t:'Markers while recording, second try',how:()=>`MIDI setting cue, cue utility off. Run records 8 bars of bar code and, after the recording has started, switches cue record mode on and off around each marker note (notes 0 to 7, one per bar). Afterwards, tap up until CUE shows and count the cues with + and −, then tap up again.`,
   acts:[['Run',()=>runBarcode('toggle')]],qs:[['How many cues does it have?',CUE_Q]]}
 );
+DIAG.push(
+ {id:'autoMk',t:'Bar markers after a take',how:'MIDI setting cue. Record a take of 8 bars or more from the Record tab and let it finish. The app then rewinds the TP-7 and plays the take once, placing a cue on each bar, with no taps from you. Afterwards open the take in the review and jump to a few bars.',
+  acts:[],qs:[['Did the markers start by themselves?',['Yes','No']],['Did the TP-7 play the take from the beginning?',['Yes','No, from somewhere else','It did not play']],['Do jumps start on the downbeat?',['Yes','Slightly off','Clearly off']]]}
+);
 const DIAG_PLAN=[
-  ['Part 1, the main goal: get the guitar into the looper',['inScan','looper']],
-  ['Part 2: one more try at markers during recording. If cues appear, run the measure test right after',['barcodeCues2','mcheck']]
+  ['Part 1, the main goal: get the guitar into the looper. Record sources line 1 and USB 1',['inScan','looper']],
+  ['Part 2: bar markers that add themselves after each take',['autoMk']],
+  ['When needed: marker timing check',['barcode','mpass','mcheck']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -2714,6 +2724,12 @@ async function lpOpenInput(){
   src.connect(LP.sp); LP.sp.connect(z); z.connect(ctx.destination);
   return true;
 }
+/* the TP-7 only passes the guitar to USB while armed (record light flashing), 8 Oct */
+function lpArm(on){
+  if(on){ if(!midiReady()||R.take||R.mpass) return; mNow([0xB0,14,127]); LP.armed=true; }
+  else if(LP.armed){ if(!R.take&&midiReady()) mNow([0xB0,14,0]); LP.armed=false; }
+  const st=$('#lpArmNote'); if(st) st.textContent=LP.armed?'TP-7 armed so the guitar reaches the app. Pressing play on the TP-7 now would record.':midiReady()?'':'Connect MIDI so the app can arm the TP-7. Until then, arm it by hand (record light flashing).';
+}
 function lpRenderIn(){
   const sel=$('#lpIn'); if(!sel) return; const n=LP.nch||2, cur=(S.looper.chans||[0,1]).join(','); let h='';
   for(let c=0;c<n;c+=2){ const c2=Math.min(c+1,n-1), v=`${c},${c2}`; h+=`<option value="${v}"${v===cur?' selected':''}>Input ${c+1}${c2!==c?'–'+(c2+1):''}</option>`; }
@@ -2728,12 +2744,13 @@ function lpMeterRun(){
 async function runInScan(){
   initAudio(); if(!(await lpOpenInput())) return 'Audio input was blocked.';
   if(R.playing) return 'Stop playback first.';
+  const wasArmed=LP.armed; if(!wasArmed) lpArm(true); await sleep(300);
   const n=LP.nch||2, db=v=>v>0?20*Math.log10(v):-120;
   LP.scan=new Array(8).fill(0); setDs('inScan','Step 1 of 2: mute the strings. The app plays clicks for 3 s…');
   const t=ctx.currentTime+0.2; for(let i=0;i<6;i++) calClick(t+i*0.5,i===0); await sleep(3400);
   const app=LP.scan.slice(0,n); LP.scan=new Array(8).fill(0);
   setDs('inScan','Step 2 of 2: play the guitar now, for 4 s…'); await sleep(4000);
-  const gtr=LP.scan.slice(0,n); LP.scan=null;
+  const gtr=LP.scan.slice(0,n); LP.scan=null; if(!wasArmed&&$('#loopPop').hidden) lpArm(false);
   const L=[`The TP-7 sends ${n} input channel${n>1?'s':''} to the app.`];
   for(let c=0;c<n;c++) L.push(`Input ${c+1}: app sound ${db(app[c]).toFixed(0)} dBFS, guitar ${db(gtr[c]).toFixed(0)} dBFS.`);
   let best=null, sc=-1e9;
@@ -2810,6 +2827,7 @@ function lpBuild(){
     <button type="button" class="take" id="lpRecBtn" data-act="lpRec">Record loop</button>
     <div class="orow2">${togH('looper.muted','Mute')}<input type="range" data-k="looper.level" min="0" max="1" step="0.01" aria-label="Loop level" class="lp-level"><button type="button" class="btn" data-act="lpClear">Clear</button></div>
     <div class="orow2"><select class="msel" id="lpIn" aria-label="Looper input channels"></select><span class="lp-meter" aria-hidden="true"><i id="lpMeter"></i></span></div>
+    <p class="note lp-note" id="lpArmNote"></p>
     <div class="orow2"><span class="lp-lat" id="lpLat"></span><button type="button" class="btn sm" data-act="lpLat-" aria-label="Latency 5 ms shorter">−</button><button type="button" class="btn sm" data-act="lpLat+" aria-label="Latency 5 ms longer">+</button><button type="button" class="btn sm" data-act="lpMeasure">Measure</button></div>
   </div>`);
 }
@@ -3010,12 +3028,12 @@ function doAct(a,el){
     case 'add': S.chain.push({sec:i,rep:1}); R.chainSel=S.chain.length-1; save(); renderChain(); { const t=$('#chain'); if(t) t.scrollLeft=t.scrollWidth; } break;
     case 'reset': confirmTap(el,'Tap again to erase everything',()=>{ if(R.playing) stop(); S=defaults(); seedDemo(); R.cur=0; R.undo=[]; save(); renderAll(); toast('Started a new project.'); }); break;
     case 'tone': toggleTone(); break;
-    case 'take': if(R.take&&R.take.phase==='run') stop(); else startTake(); break;
+    case 'take': if(R.mpass&&!R.take){ cancelMarkerPass(); break; } if(R.take&&R.take.phase==='run') stop(); else startTake(); break;
     case 'midi': midiConnect(); break;
     case 'mRecOn': if(!midiReady()) toast('Connect MIDI first.'); midiSend([0xB0,14,127]); break;
     case 'mRecOff': if(!midiReady()) toast('Connect MIDI first.'); midiSend([0xB0,14,0]); break;
     case 'more': { const pop=$('#morePop'), open=pop.hidden; pop.hidden=!open; el.setAttribute('aria-expanded',String(open)); break; }
-    case 'loopPop': { const p=$('#loopPop'), open=p.hidden; p.hidden=!open; el.setAttribute('aria-expanded',String(open)); if(open){ lpRender(); initAudio(); lpOpenInput().then(ok=>{ if(ok) lpRenderIn(); }); lpMeterRun(); } break; }
+    case 'loopPop': { const p=$('#loopPop'), open=p.hidden; p.hidden=!open; el.setAttribute('aria-expanded',String(open)); if(open){ lpRender(); initAudio(); lpArm(true); lpOpenInput().then(ok=>{ if(ok) lpRenderIn(); }); lpMeterRun(); } else lpArm(false); break; }
     case 'lpRec': lpRecord(); break;
     case 'lpClear': lpClear(); break;
     case 'lpMeasure': lpMeasure(); break;
@@ -3053,7 +3071,7 @@ function doAct(a,el){
 function bindGlobal(){
   document.addEventListener('click',e=>{
     const t=e.target, pop=$('#morePop'), lpp=$('#loopPop');
-    if(lpp&&!lpp.hidden&&!t.closest('#loopPop')&&!t.closest('#loopBtn')){ lpp.hidden=true; $('#loopBtn').setAttribute('aria-expanded','false'); }
+    if(lpp&&!lpp.hidden&&!t.closest('#loopPop')&&!t.closest('#loopBtn')){ lpp.hidden=true; $('#loopBtn').setAttribute('aria-expanded','false'); lpArm(false); }
     const av=t.closest('[data-av]'); if(av){ S.arrView=av.dataset.av; save(); showTab('arrange'); return; }
     const ct=t.closest('.ctile'); if(ct){ const i=+ct.dataset.ci; R.chainSel=R.chainSel===i?null:i; renderChain(); return; }
     if(t.closest('.tapout')){ if(e.detail===0) tapTempo(); return; }
@@ -3178,6 +3196,7 @@ if(!['loop','jam','song'].includes(S.tp.takeMode)) S.tp.takeMode='loop';
 if(!Array.isArray(S.takes)) S.takes=[]; S.diag=Object.assign(defaults().diag,S.diag||{}); ['ans','notes','ran'].forEach(k=>{ if(!S.diag[k]||typeof S.diag[k]!=='object') S.diag[k]={}; }); if(!S.tp.startMode) S.tp.startMode='arm'; if(!S.tp.mig2){ if(S.tp.startMode==='start') S.tp.startMode='arm'; S.tp.clock=false; S.tp.mig2=true; } if(!S.tp.mig3){ if(['arm','beep','rocker'].includes(S.tp.startMode)) S.tp.startMode='start'; S.tp.clock=true; S.tp.mig3=true; }
 if(!S.tp.mig4){ S.tp.clock=false; S.tp.mig4=true; }
 if(S.tp.takeCueDelay==null) S.tp.takeCueDelay=0;
+if(S.tp.autoMarkers==null) S.tp.autoMarkers=true;
 if(!S.tp.mig8){ S.tp.clock=true; if(S.tp.mDelay==null||S.tp.mDelay===30) S.tp.mDelay=76; S.tp.mig8=true; } // clock gives each take the project tempo; 76 ms measured on 3 Oct
 if(!S.tp.mig9){ S.tp.clock=false; S.tp.mig9=true; } // 5 Oct: takes kept the TP-7's own tempo even with clock and song position
 if(!S.tp.mig10){ if(S.tp.mDelay===76) S.tp.mDelay=79; S.tp.mig10=true; } // 5 Oct: median 3.3 ms early at 76 ms
