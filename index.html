@@ -162,6 +162,12 @@ input[type=range]{width:100%;accent-color:var(--ink);margin:0}
 .pop{position:fixed;z-index:45;right:calc(14px + env(safe-area-inset-right,0px));bottom:calc(64px + env(safe-area-inset-bottom,0px));width:min(290px,calc(100vw - 28px));
   background:var(--panel);border-radius:14px;padding:12px;display:flex;flex-direction:column;gap:10px;box-shadow:0 12px 32px rgba(0,0,0,.22),0 0 0 1px var(--line)}
 .lp-note{margin:0;font-size:12px}
+.dg-badge{display:inline-block;vertical-align:2px;margin-left:6px;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.02em}
+.dg-badge.pass{background:color-mix(in srgb,#39C07A 28%,transparent)}
+.dg-badge.warn{background:color-mix(in srgb,#E8C33A 34%,transparent)}
+.dg-badge.fail{background:color-mix(in srgb,#E5483B 30%,transparent)}
+.dg-badge.info{background:color-mix(in srgb,var(--ink) 12%,transparent)}
+.dg-x{white-space:pre-wrap;font-size:12px}
 .lp-meter{flex:1;height:8px;border-radius:4px;background:color-mix(in srgb,var(--ink) 12%,transparent);overflow:hidden}
 .lp-meter i{display:block;height:100%;width:0;background:var(--go);transition:width .08s linear}
 .pop .pl{flex:none;min-width:58px;font-size:14px;color:var(--ink-2)}
@@ -793,7 +799,8 @@ function posAt(time){ const h=histAt(time); if(!h||h.sec==null) return null; ret
 
 function scheduler(){
   if(!ctx||ctx.state!=='running') return;
-  if(R.nextTime<ctx.currentTime-0.25) R.nextTime=ctx.currentTime+0.02;
+  if(R.mon&&R.playing){ const m=R.nextTime-ctx.currentTime; if(m<R.mon.min) R.mon.min=m; R.mon.n++; }
+  if(R.nextTime<ctx.currentTime-0.25){ R.nextTime=ctx.currentTime+0.02; if(R.mon) R.mon.resets++; }
   const ahead=ctx.currentTime+0.12;
   while(R.nextTime<ahead){ scheduleStep(R.nextTime); R.nextTime+=stepDur(); }
 }
@@ -1137,7 +1144,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='35 (8 Oct 2026)';
+const APP_BUILD='36 (9 Oct 2026)';
 const SXOP={session:0x40,play:0x50,stop:0x51}; let sxId=0;
 function sxMsg(op){ sxId=sxId%4095+1; return [0xF0,0x00,0x20,0x76,0x19,0x40,0x60|((sxId>>7)&0x1F),sxId&0x7F,0x7F,0x00,op,0xF7]; }
 function tapeArm(m,at){ midiSend([0xB0,14,127],at); if(m==='sysex') midiSend(sxMsg(SXOP.session),at); }
@@ -1355,7 +1362,7 @@ function buildPanels(){
   <div class="orow"><span class="lbl">Start recording</span>${segH('tp.startMode',[['sysex','SysEx'],['start','MIDI start'],['arm','Arm, you start'],['manual','By hand']])}</div>
   <p class="note" id="startNote"></p>
   <div class="orow"><button type="button" class="btn" data-act="testStart">Test: record 4 s</button><button type="button" class="btn" data-act="diag">Run TP-7 diagnostics</button></div>
-  <div class="orow">${togH('tp.autoMarkers','Add bar markers after each take')}${togH('tp.clock','Send tempo as MIDI clock')}</div>
+  <div class="orow">${togH('tp.autoMarkers','Add bar markers after each take')}</div>
   <p class="note" id="clockNote"></p>
   <p class="note" id="tpTempoNote"></p><button type="button" class="btn" data-act="tpMatch" id="tpMatchBtn" hidden>Use the TP-7 tempo</button>
   <h3>Before you record<small id="chkCount"></small></h3>
@@ -1533,7 +1540,7 @@ function renderTpInfo(){
     :sm==='beep'?'Arms the TP-7 with CC 14. The start beep then triggers its auto start record, so turn that on in the TP-7 record settings, set to start only.'
     :sm==='rocker'?'Arms the TP-7 with CC 14, then pushes its tape rocker forward with CC 18 on the downbeat, and back to stop after the tail.'
     :'You press record on the TP-7 during the pre-roll.')+(sm==='start'?' Works with the TP-7 MIDI setting on sync only.':'');
-  renderTpTempo(); $('#clockNote').textContent=S.tp.clock?`Sends ${S.bpm} bpm as MIDI clock. Tested on 5 Oct: the TP-7 does not take its tempo from it, so you can leave this off.`:'MIDI clock is off. The TP-7 keeps the tempo from its own settings: no known message changes it, so set it by hand if you use its metronome or its own bar jumps. The app\'s bar markers do not depend on it.';
+  renderTpTempo(); $('#clockNote').textContent=!S.tp.clock?'':S.tp.clock?`Sends ${S.bpm} bpm as MIDI clock. Tested on 5 Oct: the TP-7 does not take its tempo from it, so you can leave this off.`:'MIDI clock is off. The TP-7 keeps the tempo from its own settings: no known message changes it, so set it by hand if you use its metronome or its own bar jumps. The app\'s bar markers do not depend on it.';
   $('#offOut').textContent=(S.tp.midiOffset>0?'+':'')+S.tp.midiOffset+' ms';
   renderChk();
 }
@@ -1826,7 +1833,7 @@ function clockBpm(c){
 }
 function renderTpTempo(){
   const el=$('#tpTempoNote'), bt=$('#tpMatchBtn'); if(!el) return; const r=R.tpBpm;
-  if(!r){ el.textContent='TP-7 tempo: not read yet. Press play on the TP-7 for a few seconds and the app reads its tempo from its clock (confirmed with the MIDI setting on sync).'; if(bt) bt.hidden=true; return; }
+  if(!r){ el.textContent=''; if(bt) bt.hidden=true; return; }
   const v=Math.round(r.bpm*10)/10, same=Math.abs(v-S.bpm)<0.5;
   el.textContent=`TP-7 tempo: ${v.toFixed(1)} bpm, read from ${r.beats} beats of its clock${r.lost?` (${r.lost} ticks missing)`:''}. `+(same?'It matches the project.':`The project is ${S.bpm} bpm: set the TP-7 record tempo to ${S.bpm}, or match the app to the TP-7.`);
   if(bt){ bt.hidden=same; bt.textContent=`Use ${Math.round(v)} bpm in the app`; }
@@ -2013,6 +2020,16 @@ async function shareCapture(){
 }
 
 /* round 4: can a short guitar loop be recorded and looped? */
+function verdict(id,s,lines){ (S.diag.res=S.diag.res||{})[id]={s,at:Date.now()}; dgExtra(id,lines); }
+const VLABEL={pass:'Pass',warn:'Check',fail:'Fail',info:'Noted'};
+function setupVerdict(){ const a=i=>S.diag.ans['setup:'+i]; if([0,1,2,3].some(i=>a(i)==null)) return null; return a(0)===0&&a(1)===0&&a(2)===0&&a(3)===0?'pass':'warn'; }
+function setupFixes(){ const a=i=>S.diag.ans['setup:'+i], L=[];
+  if(a(0)!=null&&a(0)!==0) L.push('Set the MIDI setting to cue: SysEx start, markers, jumps and loops all work there.');
+  if(a(1)===1) L.push('Turn auto start off: while it is on, REC shows a T and nothing from the app can start a recording.');
+  if(a(2)===1) L.push('Turn count-in off: it delays the start of every take.');
+  if(a(3)===1) L.push('Set the record sources to line 1 and USB 1: USB 1 records the app, line 1 the guitar, and the looper needs line 1.');
+  return L; }
+function dgV(t){ if(t.id==='setup') return setupVerdict(); const r=(S.diag.res||{})[t.id]; return r?r.s:null; }
 function dgExtra(id,lines){ (S.diag.extra=S.diag.extra||{})[id]=lines; save(); }
 async function runInputCheck(){
   initAudio();
@@ -2303,24 +2320,30 @@ function barcodeErr(x,sr,bar,b){
   for(let j=i0;j>=1;j--){ const sp=clamp(fAt(Math.max(1,j))/fIn(g),0,1.5); g-=sp/sr; }
   return {err:(g-b*bar)*1000, spread:(us[us.length-1]-us[0])*1000};
 }
-async function runMarkerCheck(){
-  initAudio(); const bc=S.diag.barcode; if(!bc) return 'Record the bar code take first (test 4).';
-  if(!(await lpOpenInput())) return 'Audio input was blocked.';
-  R.clockMute=true; const bar=240/bc.bpm, L=[], errs=[];
-  for(let b=0;b<8;b++){
-    setDs('mcheck',`Cue ${b+1} of 8: triggering note ${b} and listening…`);
+async function measureCues(id,n,bar){
+  if(!(await lpOpenInput())) return null;
+  const was=LP.armed; if(was){ lpArm(false); await sleep(300); }
+  const L=[], errs=[];
+  for(let b=0;b<n;b++){
+    setDs(id,`Checking marker ${b+1} of ${n}: triggering it and listening…`);
     lpStartCap(1.8); await sleep(200); mNow([0x90,b,100]); await sleep(1000); mNow([0x80,b,0]); await sleep(300);
     const f=lpFlat(); LP.cap=null; const r=f?barcodeErr(f.l,f.sr,bar,b):null;
-    if(r&&r.spread<2){ if(b>0) errs.push(r.err); L.push(`Bar ${b+1}: cue sits ${Math.abs(r.err).toFixed(1)} ms ${r.err>=0?'after':'before'} the bar line.`); }
+    if(r&&r.spread<2){ if(b>0) errs.push(r.err); L.push(`Bar ${b+1}: marker ${Math.abs(r.err).toFixed(1)} ms ${r.err>=0?'after':'before'} the bar line.`); }
     else L.push(`Bar ${b+1}: ${r?'unclear reading':'no playback heard'}.`);
   }
-  // bar 1 is placed while the tape is still speeding up, so it is reported but left out of the delay estimate
-  const later=errs;
-  if(later.length){ const sd=[...later].sort((p,q)=>p-q), med=sd[sd.length>>1];
-    L.push(`Bars 2 to 8: median ${med>=0?'+':''}${med.toFixed(1)} ms, range ${sd[0].toFixed(1)} to ${sd[sd.length-1].toFixed(1)} ms, for cues placed ${S.diag.mdKind==='take'?'during the take':'by the marker pass'} with a ${S.diag.mpassDelay??S.tp.mDelay} ms delay.`);
-    S.diag.mdSug=Math.round(clamp((S.diag.mpassDelay??S.tp.mDelay)-med,-50,200)); }
+  if(was) lpArm(true);
+  if(!errs.length) return {L,errs};
+  const sd=[...errs].sort((p,q)=>p-q);
+  return {L,errs,med:sd[sd.length>>1],lo:sd[0],hi:sd[sd.length-1]};
+}
+async function runMarkerCheck(){
+  initAudio(); const bc=S.diag.barcode; if(!bc) return 'Record the bar code take first.';
+  const m=await measureCues('mcheck',bc.bars||8,240/bc.bpm); if(!m) return 'Audio input was blocked.';
+  const L=m.L;
+  if(m.med!=null){ L.push(`Bars 2 to ${bc.bars||8}: median ${m.med>=0?'+':''}${m.med.toFixed(1)} ms, range ${m.lo.toFixed(1)} to ${m.hi.toFixed(1)} ms, with a ${S.diag.mpassDelay??S.tp.mDelay} ms delay.`);
+    S.diag.mdSug=Math.round(clamp((S.diag.mpassDelay??S.tp.mDelay)-m.med,-50,200)); }
   else S.diag.mdSug=null;
-  R.clockMute=false; dgExtra('mcheck',L); renderDiag(); return L[L.length-1];
+  dgExtra('mcheck',L); return L[L.length-1];
 }
 DIAG.push(
  {id:'sxPlay',t:'SysEx play without arming',how:'MIDI setting cue, cue utility off. Load a recording, stopped and not armed. Run sends Start Session and Play, then SysEx Stop 3 s later. The marker pass and the capture need this.',
@@ -2432,7 +2455,7 @@ DIAG.push(
   qs:[['What did the rocker do?',['Rewound to the beginning','Rewound part of the way','Something else','Nothing']],['Where did playback start?',['The beginning','Where the rocker left it','Where it was before','It did not play']]]}
 );
 DIAG.push(
- {id:'inScan',t:'Find the guitar input',nomidi:true,how:'Guitar plugged into the TP-7 line input, record sources line 1 and USB 1, app stopped. The app arms the TP-7 itself. Run first plays clicks while you mute the strings, then asks you to play for 4 s. It shows which inputs carry what and points the looper at the guitar.',
+ {id:'inScan',t:'Find the guitar input',nomidi:true,how:'About 10 s. Guitar in the TP-7 line input, record sources line 1 and USB 1. The app arms the TP-7 itself. Run first plays clicks while you mute the strings, then asks you to play for 4 s. It shows which inputs carry what and points the looper at the guitar.',
   acts:[['Run',runInScan]],qs:[]}
 );
 DIAG.push(
@@ -2443,10 +2466,230 @@ DIAG.push(
  {id:'autoMk',t:'Bar markers after a take',how:'MIDI setting cue. Record a take of 8 bars or more from the Record tab and let it finish. The app then rewinds the TP-7 and plays the take once, placing a cue on each bar, with no taps from you. Afterwards open the take in the review and jump to a few bars.',
   acts:[],qs:[['Did the markers start by themselves?',['Yes','No']],['Did the TP-7 play the take from the beginning?',['Yes','No, from somewhere else','It did not play']],['Do jumps start on the downbeat?',['Yes','Slightly off','Clearly off']]]}
 );
+/* ===== beta diagnostics: every test runs on this screen and ends with a verdict ===== */
+const waitFor=(fn,ms,step)=>new Promise(res=>{ const t0=performance.now(); const iv=setInterval(()=>{ let v=false; try{ v=fn(); }catch(e){} if(v||performance.now()-t0>ms){ clearInterval(iv); res(!!v); } },step||100); });
+const snapK=keys=>Object.fromEntries(keys.map(k=>[k,getK(k)]));
+const restoreK=o=>Object.entries(o).forEach(([k,v])=>setK(k,v));
+function tp7Ready(){
+  if(!midiReady()) return 'Connect MIDI first: TP-7 tab, Connect MIDI.';
+  if(S.tp.startMode!=='sysex') return 'Set Start recording to SysEx in the TP-7 tab first.';
+  if(R.sysex!==true) return 'SysEx is not allowed. Reconnect MIDI and allow SysEx.';
+  if(R.playing||R.take||R.mpass||LP.rec) return 'Stop playback first.';
+  return '';
+}
+function goertzel(x,i0,n,f,sr){ const k=2*Math.cos(2*Math.PI*f/sr); let a=0,b=0; for(let i=i0;i<i0+n;i++){ const y=x[i]+k*a-b; b=a; a=y; } return (a*a+b*b-k*a*b)/(n*n); }
+// onsets in a loop buffer, one per beat: the time each beat's sound starts, relative to the beat
+function loopOnsets(buf,beat,nBeats,mode){
+  const sr=buf.sampleRate, A0=buf.getChannelData(0), A1=buf.numberOfChannels>1?buf.getChannelData(1):A0, n=A0.length, B=Math.max(1,Math.round(0.001*sr)), nb=Math.floor(n/B), e=new Float32Array(nb);
+  let pk=0; for(let k=0;k<nb;k++){ let m=0; for(let i=k*B;i<(k+1)*B;i++){ const v=Math.max(Math.abs(A0[i]),Math.abs(A1[i])); if(v>m) m=v; } e[k]=m; if(m>pk) pk=m; }
+  if(pk<0.003) return {pk,errs:[]};
+  let thr=pk*0.25;
+  if(mode==='click'){ let fl=0; for(let k=0;k<nBeats;k++){ const a=Math.round((k+0.4)*beat*1000), z=Math.min(nb,Math.round((k+0.9)*beat*1000)); for(let q=a;q<z;q++) if(e[q]>fl) fl=e[q]; } thr=Math.min(Math.max(0.02,fl*4),pk*0.5); }
+  const before=mode==='click'?0.05:0.12, after=mode==='click'?0.1:0.15, errs=[];
+  for(let k=0;k<nBeats;k++){
+    const c=k*beat, a=Math.max(1,Math.round((c-before)*1000)), z=Math.min(nb,Math.round((c+after)*1000)); let hit=null;
+    for(let q=a;q<z;q++){ if(e[q]>thr){ let quiet=true; for(let w=Math.max(0,q-20);w<q;w++) if(e[w]>thr*0.6){ quiet=false; break; } if(quiet){ hit=q; break; } } }
+    if(hit==null){ errs.push(null); continue; }
+    let i=hit*B; const lim=Math.max(0,i-B); while(i>lim&&Math.max(Math.abs(A0[i-1]),Math.abs(A1[i-1]))>thr) i--;
+    for(let q=hit*B;q<(hit+1)*B;q++) if(Math.max(Math.abs(A0[q]),Math.abs(A1[q]))>thr){ i=q; break; }
+    errs.push(i/sr-c);
+  }
+  return {pk,errs};
+}
+function medOf(a){ const s=[...a].sort((p,q)=>p-q); return s.length?s[s.length>>1]:null; }
+
+async function runSysCheck(){
+  initAudio(); await sleep(150); const P=[],W=[],F=[];
+  const o=R.midi&&R.midiOutId&&R.midi.outputs.get(R.midiOutId);
+  if(!R.midi) F.push('MIDI is not connected. Close this screen and tap Connect MIDI in the TP-7 tab.');
+  else if(!o||!/tp.?7/i.test(o.name||'')) F.push('The MIDI output is not the TP-7'+(o?` (it is ${o.name})`:'')+'.');
+  else P.push(`MIDI output: ${o.name}.`);
+  if(R.midi){ if(R.sysex===true) P.push('SysEx allowed, so the app can start and stop recordings.'); else F.push('SysEx is not allowed. Reconnect MIDI and allow SysEx: without it the app cannot start recordings with the TP-7 MIDI setting on cue.'); }
+  if(S.tp.startMode!=='sysex') W.push('Start recording is not set to SysEx in the TP-7 tab.');
+  if(!ctx||ctx.state!=='running') F.push('Audio is not running. Tap anywhere on the screen, then run this again.');
+  else P.push(`Audio: ${ctx.sampleRate/1000} kHz, ${ctx.destination.maxChannelCount} output channel${ctx.destination.maxChannelCount>1?'s':''}, output latency ${msTxt(ctx.outputLatency)}.`);
+  const k=offKey(), offs=S.tp.offsets||{};
+  if(offs[k]!=null) P.push(`Timing offset for this audio setup (${k}): ${offs[k]} ms.`);
+  else if(offs[setupKey()]!=null) W.push(`Timing offset for ${k} is borrowed from MIDI start (${offs[setupKey()]} ms). Run Start timing to measure it.`);
+  else W.push(`No timing offset measured for this audio setup (${setupKey()}). Run Start timing.`);
+  const ts=R.timerStat||await measureTimer(); R.timerStat=ts;
+  (ts.max<60?P:W).push(`Timers late by ${ts.med.toFixed(1)} ms typically, ${ts.max.toFixed(1)} ms at worst; the sequencer plans 120 ms ahead.`);
+  if('wakeLock' in navigator){ try{ const w=await navigator.wakeLock.request('screen'); await w.release(); P.push('Wake lock works, so the screen stays on during playback and takes.'); }catch(e){ W.push(`Wake lock refused (${e.name}). Set Auto-Lock to Never while recording, or the screen may lock mid-take.`); } }
+  else W.push('No wake lock in this browser. Set Auto-Lock to Never while recording.');
+  try{ localStorage.setItem('tinebox.t','1'); const ok=localStorage.getItem('tinebox.t')==='1'; localStorage.removeItem('tinebox.t'); saveNow(); const kb=Math.round((localStorage.getItem('tinebox.v1')||'').length/1024);
+    const back=(()=>{ try{ return JSON.parse(localStorage.getItem('tinebox.v1')).bpm===S.bpm; }catch(e){ return false; } })();
+    if(!ok||!back) F.push('Storage does not keep the project, so changes will be lost.'); else (kb>4000?W:P).push(`Storage works; the project uses ${kb} kB${kb>4000?', close to the browser limit, so older take waveforms will be dropped':''}.`); }
+  catch(e){ F.push('Storage is blocked, so projects will not be saved.'); }
+  if(document.querySelector('link[rel="manifest"]')){ const sw=navigator.serviceWorker&&navigator.serviceWorker.controller; (sw?P:W).push(sw?'Offline ready: the app loads without a connection.':'Not offline-ready yet: reload the page once while online.'); }
+  if(!(navigator.mediaDevices&&navigator.mediaDevices.getUserMedia)) F.push('This browser offers no audio input, so the looper cannot work.');
+  else P.push('Audio input available for the looper and the measurements.');
+  if(ctx&&ctx.state==='running'&&!R.playing&&!R.take&&!R.mpass){
+    setDs('sys','Running the sequencer silently for 5 s…');
+    const g=A.out.gain.value; A.out.gain.setValueAtTime(0,ctx.currentTime); R.mon={min:1,n:0,resets:0};
+    play(0); await sleep(5000); stop(); const m=R.mon; R.mon=null; A.out.gain.setValueAtTime(g,ctx.currentTime+0.8);
+    (m.resets===0&&m.min>0.02?P:W).push(`Sequencer: 5 s of silent playback, ${m.resets} late restart${m.resets===1?'':'s'}, never less than ${Math.round(m.min*1000)} ms ahead of the audio.`);
+  }
+  const v=F.length?'fail':W.length?'warn':'pass';
+  verdict('sys',v,[...F.map(x=>'✗ '+x),...W.map(x=>'! '+x),...P.map(x=>'✓ '+x)]);
+  return v==='pass'?'Everything checks out.':`${F.length} problem${F.length===1?'':'s'} and ${W.length} warning${W.length===1?'':'s'}, listed below.`;
+}
+
+async function runStartTiming(){
+  const e=tp7Ready(); if(e) return e; initAudio(); if(LP.armed) lpArm(false);
+  S.diag.calResult=null; S.diag.calSug=null; S.diag.tStartSug=null;
+  setDs('tStart','Step 1 of 2: recording 8 bars of clicks…'); await runCal(); await sleep(1500);
+  setDs('tStart','Step 2 of 2: rewinding, playing it back and measuring…'); const cap=await runCapture();
+  const g=S.diag.calSug, L=(S.diag.calResult||[]).slice(), off=(S.diag.cal&&S.diag.cal.off)||0;
+  if(!g||g.start==null){ verdict('tStart','fail',[cap,...L,'Check that the TP-7 records the USB input (record sources line 1 and USB 1) and that its MIDI setting is cue.']); return 'Could not measure: '+cap; }
+  const v=-g.start, nv=Math.round(clamp(off+g.start,-100,100)), s=Math.abs(v)<=2?'pass':Math.abs(v)<=8?'warn':'fail';
+  if(s!=='pass') S.diag.tStartSug=nv;
+  verdict('tStart',s,[`Recording began ${Math.abs(v).toFixed(1)} ms ${v>=0?'after':'before'} the app's downbeat, with a ${off} ms offset for ${offKey()}.`,...(s!=='pass'?[`Use ${nv} ms to put it on the downbeat.`]:[]),...L]);
+  return s==='pass'?`Takes start within ${Math.abs(v).toFixed(1)} ms of the downbeat.`:`Off by ${Math.abs(v).toFixed(1)} ms: tap Use ${nv} ms below.`;
+}
+
+async function runFullTake(){
+  const e=tp7Ready(); if(e) return e; initAudio(); if(LP.armed) lpArm(false);
+  const sec=curSec(), reps=Math.max(1,Math.round(8/sec.bars)), bars=sec.bars*reps, nb=Math.min(8,bars);
+  const keep=snapK(['tp.takeMode','tp.takeReps','tp.preroll','tp.tail','tp.cueEvery','tp.autoMarkers','tp.countIn','tp.slate','lv.keys','lv.drums','metro','looper.muted']);
+  setK('tp.takeMode','loop'); setK('tp.takeReps',reps); setK('tp.preroll',1); setK('tp.tail',1); setK('tp.cueEvery',1); setK('tp.autoMarkers',true);
+  setK('tp.countIn',false); setK('tp.slate',false); setK('lv.keys',0); setK('lv.drums',0); setK('metro',false); setK('looper.muted',true);
+  const done=(s,L,msg)=>{ restoreK(keep); renderTpInfo(); verdict('tFull',s,L); return msg; };
+  startTake(); if(!R.take) return done('fail',['The take did not start.'],'The take did not start.');
+  R.take.label='Diagnostics take';
+  const dur=stepDur(), bar=16*dur, D=R.nextTime+(-R.absStep)*dur;
+  const o=ctx.createOscillator(), g=ctx.createGain(); g.gain.value=0.18;
+  for(let b=0;b<bars;b++){ o.frequency.setValueAtTime(300,D+b*bar); o.frequency.linearRampToValueAtTime(3300,D+(b+1)*bar-0.0005); }
+  o.connect(g); g.connect(A.fixed); o.start(D); o.stop(D+bars*bar);
+  const iv=setInterval(()=>{ const now=ctx.currentTime; if(R.take&&now<D) setDs('tFull','Pre-roll…'); else if(R.take) setDs('tFull',`Recording bar ${Math.min(bars,Math.floor((now-D)/bar)+1)} of ${bars} (music muted, bar code playing)…`); },250);
+  await waitFor(()=>!R.take,((D-ctx.currentTime)+bars*bar+S.tp.tail+8)*1000); clearInterval(iv);
+  const k=S.takes[0];
+  if(R.take||!k||k.label!=='Diagnostics take') return done('fail',['The take did not finish or was not saved.'],'The take did not finish.');
+  setDs('tFull','Take saved. Waiting for the automatic marker pass…');
+  const started=await waitFor(()=>!!R.mpass,8000);
+  if(!started) return done('fail',['The take recorded, but the automatic marker pass did not start.'],'No automatic marker pass.');
+  await waitFor(()=>!R.mpass,(bars*bar+15)*1000);
+  restoreK(keep); renderTpInfo();
+  if(!k.markerPass){ verdict('tFull','fail',['The marker pass started but did not finish.']); return 'The marker pass did not finish.'; }
+  S.diag.mpassDelay=S.tp.mDelay; S.diag.mdKind='pass';
+  const m=await measureCues('tFull',nb,bar);
+  const di=S.takes.indexOf(k); if(di>=0){ S.takes.splice(di,1); save(); try{ renderCues(); }catch(x){} }
+  if(!m||m.med==null){ verdict('tFull','fail',['Take and marker pass ran, but no marker played back when triggered.',...(m?m.L:[])]); return 'Markers did not play back.'; }
+  const s=Math.abs(m.med)<=3&&m.lo>=-8&&m.hi<=8?'pass':Math.abs(m.med)<=8?'warn':'fail';
+  S.diag.mdSug=s==='pass'?null:Math.round(clamp(S.tp.mDelay-m.med,-50,200));
+  verdict('tFull',s,[`Take of ${bars} bars recorded and saved; ${k.markerPass.n} markers placed automatically.`,`Bars 2 to ${nb}: median ${m.med>=0?'+':''}${m.med.toFixed(1)} ms, range ${m.lo.toFixed(1)} to ${m.hi.toFixed(1)} ms, with a ${S.tp.mDelay} ms marker delay.`,...m.L]);
+  return s==='pass'?'Take, automatic markers and jumps all work, on the beat.':`Markers sit ${Math.abs(m.med).toFixed(1)} ms ${m.med>0?'late':'early'}: tap the button below.`;
+}
+
+async function runTpLoopRec(){
+  const e=tp7Ready(); if(e) return e; initAudio(); if(LP.armed) lpArm(false);
+  if(!(await lpOpenInput())) return 'Audio input was blocked.';
+  const bpm=S.bpm, bar=240/bpm, FQ=[500,700,900,1100], D=ctx.currentTime+1.5, E=D+4*bar+0.3;
+  mNow([0xB0,17,0]); tapeArm('sysex'); tapeStart('sysex',D);
+  const o=ctx.createOscillator(), g=ctx.createGain(); g.gain.value=0.15; FQ.forEach((f,b)=>o.frequency.setValueAtTime(f,D+b*bar)); o.connect(g); g.connect(A.fixed); o.start(D); o.stop(D+4*bar);
+  midiSend([0xB0,17,1],D+bar); midiSend([0xB0,17,2],D+3*bar);
+  tapeStop('sysex',E); midiSend([0xB0,14,0],E+0.05);
+  setDs('tLoopRec','Recording 4 bars, one tone per bar, with loop points at bars 2 and 4…');
+  await sleep((E-ctx.currentTime)*1000+1500);
+  setDs('tLoopRec','Playing it back to hear whether the TP-7 loops…');
+  await tapeRewind(); const secs=7*bar; lpStartCap(secs+1); mNow(sxMsg(SXOP.session)); mNow(sxMsg(SXOP.play)); await sleep(secs*1000); mNow(sxMsg(SXOP.stop)); await sleep(200); mNow([0xB0,17,0]);
+  const f=lpFlat(); LP.cap=null; if(!f){ verdict('tLoopRec','fail',['Nothing came back from the TP-7.']); return 'Nothing came back.'; }
+  const sr=f.sr, W=Math.round(0.1*sr), seq=[];
+  for(let i=0;i+W<=f.l.length;i+=W){ let best=-1,bv=0,tot=0; for(let q=0;q<4;q++){ const v=goertzel(f.l,i,W,FQ[q],sr); tot+=v; if(v>bv){ bv=v; best=q; } } seq.push(bv>1e-5&&bv>0.6*tot?best:-1); }
+  const runs=[]; let cur=-2,cn=0; seq.concat([-2]).forEach(x=>{ if(x===cur) cn++; else { if(cur>=0&&cn>=3&&runs[runs.length-1]!==cur) runs.push(cur); cur=x; cn=1; } });
+  const heard=runs.map(x=>x+1), looped=heard.some((x,i)=>i>0&&x===2&&heard[i-1]===3);
+  if(!heard.length){ verdict('tLoopRec','fail',['No playback heard. Is the TP-7 on the new recording, with the cue utility off?']); return 'No playback heard.'; }
+  if(looped){ verdict('tLoopRec','pass',[`Heard bars ${heard.join(' ')}: the TP-7 keeps loop points sent during a take, so the take setting "Set TP-7 loop on first pass of" works.`]); return 'Loop points sent during a take work.'; }
+  verdict('tLoopRec','info',[`Heard bars ${heard.join(' ')}: no loop. The TP-7 ignores loop points sent while it records, like cues, so the take setting "Set TP-7 loop on first pass of" does nothing and can go.`]);
+  return 'Loop points during a take are ignored.';
+}
+
+async function runLoopLat(){
+  initAudio(); if(R.playing||R.take||R.mpass||LP.rec) return 'Stop playback first.';
+  const b0={oc:ctx.destination.maxChannelCount,ol:ctx.outputLatency};
+  if(!(await lpOpenInput())){ verdict('lLat','fail',['Audio input was blocked. Allow microphone access for this page.']); return 'Audio input was blocked.'; }
+  await sleep(300);
+  const L=[`Input: ${LP.nch} channel${LP.nch>1?'s':''} from the TP-7. Output after opening the input: ${b0.oc}→${ctx.destination.maxChannelCount} channels, latency ${msTxt(b0.ol)}→${msTxt(ctx.outputLatency)}.`];
+  const was=LP.armed; if(was){ lpArm(false); await sleep(400); }
+  setDs('lLat','Listening for the app’s clicks, TP-7 not armed…'); const u=await lpLoopback();
+  let a=null; if(midiReady()){ lpArm(true); await sleep(400); setDs('lLat','…and with the TP-7 armed…'); a=await lpLoopback(); lpArm(false); await sleep(200); }
+  L.push(`Not armed: ${u?`the app’s sound comes back after ${(u.med*1000).toFixed(1)} ms (spread ${(u.spread*1000).toFixed(1)} ms)`:'the app’s sound does not come back'}.`);
+  if(midiReady()) L.push(`Armed: ${a?`the app’s sound comes back after ${(a.med*1000).toFixed(1)} ms, so loops would include it`:'the app’s sound stays out, so loops hold only the guitar'}.`);
+  if(u&&u.spread<0.004){ if(was) lpArm(true); S.looper.lat=u.med; S.looper.latHow='measured from the app’s own sound'; save();
+    L.push(`Looper latency set to ${Math.round(u.med*1000)} ms.`); verdict('lLat',a?'warn':'pass',L); return `Latency ${Math.round(u.med*1000)} ms.`; }
+  setDs('lLat','The app’s sound does not come back. Play a short muted strum on each of the 8 clicks…'); if(!LP.armed) lpArm(true); await sleep(1200);
+  const st=await lpStrums(); if(!was) lpArm(false);
+  if(st){ S.looper.lat=Math.max(0,st.med); S.looper.latHow=`measured from your playing, spread ${Math.round(st.spread*1000)} ms`; save(); L.push(`From your strums: ${Math.round(st.med*1000)} ms, spread ${Math.round(st.spread*1000)} ms.`); verdict('lLat','warn',L); return `Latency ${Math.round(st.med*1000)} ms, from your playing.`; }
+  L.push('Could not hear enough strums either.'); verdict('lLat','fail',L); return 'No latency found.';
+}
+
+const LPKEYS=['looper.bars','metro','lv.keys','lv.drums','looper.muted'];
+const lpSnap=()=>({k:snapK(LPKEYS),buf:LP.buf,steps:LP.steps,phase:LP.phase,bpm:LP.bpm});
+function lpRestore(o){ restoreK(o.k); LP.buf=o.buf; LP.steps=o.steps; LP.phase=o.phase; LP.bpm=o.bpm; lpRender(); }
+
+async function runLoopSelf(){
+  initAudio(); if(R.playing||R.take||R.mpass||LP.rec) return 'Stop playback first.';
+  if(S.looper.lat==null) return 'Run Loop latency first.';
+  if(!(await lpOpenInput())) return 'Audio input was blocked.';
+  const keep=lpSnap(), was=LP.armed; if(was){ lpArm(false); await sleep(400); }
+  setK('looper.bars',1); setK('metro',false); setK('lv.keys',0); setK('lv.drums',0); setK('looper.muted',true); LP.buf=null;
+  const beat=4*stepDur(); LP.onRec=(t0)=>{ for(let i=0;i<4;i++) calClick(t0+i*beat,i===0); };
+  setDs('lSelf','Recording one bar of the app’s own clicks into the looper…');
+  LP.dgId='lSelf'; const ok=await lpRecord(); LP.onRec=null; LP.dgId=null; stop(); const buf=LP.buf, lat=S.looper.lat; lpRestore(keep); if(was) lpArm(true);
+  if(!ok||!buf){ verdict('lSelf','fail',['The looper did not record. Is the TP-7 connected, not armed and sending its sound back (see Loop latency)?']); return 'The looper did not record.'; }
+  const r=loopOnsets(buf,beat,4,'click'), es=r.errs.slice(1).filter(x=>x!=null);
+  if(es.length<2){ verdict('lSelf','fail',[`Too few clicks found in the loop (peak ${(20*Math.log10(r.pk||1e-9)).toFixed(0)} dBFS). The app’s sound may not come back from the TP-7.`]); return 'Too few clicks in the loop.'; }
+  const med=medOf(es), mx=Math.max(...es.map(Math.abs)), s=mx<=0.0025?'pass':mx<=0.01?'warn':'fail';
+  S.diag.latSug=s==='pass'?null:Math.round((lat+med)*1000);
+  const L=[`Clicks in the loop: ${r.errs.map((x,i)=>`beat ${i+1} ${x==null?'not measured (loop start)':(x>=0?'+':'')+(x*1000).toFixed(1)+' ms'}`).join(', ')}.`,`Largest error ${(mx*1000).toFixed(1)} ms with a ${Math.round(lat*1000)} ms latency.`];
+  verdict('lSelf',s,L);
+  return s==='pass'?'Loops land on the beat.':`Loops land ${(med*1000).toFixed(1)} ms off: tap the button below.`;
+}
+
+async function runGuitarLoop(){
+  initAudio(); if(R.playing||R.take||R.mpass||LP.rec) return 'Stop playback first.';
+  if(S.looper.lat==null) return 'Run Loop latency first.';
+  if(!(await lpOpenInput())) return 'Audio input was blocked.';
+  const keep=lpSnap(), was=LP.armed; if(!was){ lpArm(true); await sleep(400); }
+  setK('looper.bars',2); setK('metro',true); setK('looper.muted',false); LP.buf=null;
+  const beat=4*stepDur();
+  setDs('lGtr','Get ready: after a one-bar count-in, play a short muted strum on every beat for 2 bars.'); await sleep(2500);
+  LP.dgId='lGtr'; const ok=await lpRecord(); LP.dgId=null; const buf=LP.buf, lat=S.looper.lat;
+  if(!ok||!buf){ stop(); lpRestore(keep); if(!was) lpArm(false); verdict('lGtr','fail',['The looper did not record. Run Find the guitar input first.']); return 'The looper did not record.'; }
+  setK('metro',false); setDs('lGtr','Listen: your loop now plays with the drums for 4 bars.');
+  await sleep(4*16*stepDur()*1000+300); stop(); lpRestore(keep); if(!was) lpArm(false);
+  const r=loopOnsets(buf,beat,8,'strum'), es=r.errs.slice(1).filter(x=>x!=null);
+  if(r.pk<0.003){ verdict('lGtr','fail',['The loop is silent: the guitar did not reach the looper. Run Find the guitar input.']); return 'The loop is silent.'; }
+  if(es.length<4){ verdict('lGtr','warn',[`Found ${es.length} of 7 strums after beat 1, too few to judge the timing. Play short, muted strums right on the clicks.`]); return 'Too few strums to judge.'; }
+  const med=medOf(es), s=Math.abs(med)<=0.02?'pass':Math.abs(med)<=0.04?'warn':'fail';
+  S.diag.latSug=s==='pass'?null:Math.round((lat+med)*1000);
+  verdict('lGtr',s,[`Strums in the loop: ${r.errs.map((x,i)=>`beat ${i+1} ${x==null?'–':(x>=0?'+':'')+Math.round(x*1000)+' ms'}`).join(', ')}.`,`Median ${med>=0?'+':''}${Math.round(med*1000)} ms from the beat (your own timing is part of this).`]);
+  return s==='pass'?'Your strums sit on the beat in the loop.':`Strums sit ${Math.round(Math.abs(med)*1000)} ms ${med>0?'late':'early'} in the loop.`;
+}
+
+const latBtn=()=>S.diag.latSug!=null?`<button type="button" class="btn" data-dact="applyLat" data-v="${S.diag.latSug}">Use ${S.diag.latSug} ms as looper latency</button>`:'';
+DIAG.push(
+ {id:'setup',t:'TP-7 settings',nomidi:true,how:'Check these on the TP-7 and tap what you see. The app cannot read or change them.',acts:[],
+  qs:[['MIDI setting (hold mode, MIDI)',['cue','sync','ctrl or off']],['Auto start (stop + record, AUTO)',['off','on']],['Count-in (stop + record, COUNT)',['off','on']],['Record sources (press record, then record again)',['line 1 and USB 1','something else']],['Sample rate (RATE)',['96 kHz','48 kHz','not sure']]]},
+ {id:'sys',t:'System check',nomidi:true,how:'Automatic, about 10 s. Checks MIDI and SysEx, audio, timers, wake lock, storage, offline readiness and audio input, then runs the sequencer silently for 5 s to make sure it never falls behind.',
+  acts:[['Run',runSysCheck]],qs:[]},
+ {id:'tStart',t:'Start timing',how:'Automatic, about a minute. TP-7 stopped, cue utility off, guitar quiet. Records 8 bars of clicks with a sweep across the downbeat, rewinds, plays it back over USB and measures where the recording began. The result is stored for this audio setup.',
+  acts:[['Run',runStartTiming]],qs:[],extra:()=>S.diag.tStartSug!=null?`<button type="button" class="btn" data-dact="apply" data-v="${S.diag.tStartSug}">Use ${S.diag.tStartSug} ms as timing offset</button>`:''},
+ {id:'tFull',t:'Full take with automatic bar markers',how:'Automatic, about a minute. Runs a real take through the Record tab’s own code: about 8 bars, music muted, a bar code playing instead. When the take ends, the marker pass must start by itself. The test then triggers every marker and measures where it lands. The diagnostics take is removed from your take list afterwards; the TP-7 keeps the file.',
+  acts:[['Run',runFullTake]],qs:[],extra:()=>S.diag.mdSug!=null&&S.diag.mdKind==='pass'?`<button type="button" class="btn" data-dact="applyMD" data-v="${S.diag.mdSug}">Use ${S.diag.mdSug} ms as marker delay</button>`:''},
+ {id:'tLoopRec',t:'TP-7 loop set during a take',how:'Automatic, about 40 s. Records 4 bars with one tone per bar and sends TP-7 loop points at bars 2 and 4 while recording, then plays the recording back and listens for a loop. Decides whether the take setting that loops a section on the TP-7 stays.',
+  acts:[['Run',runTpLoopRec]],qs:[]},
+ {id:'lLat',t:'Loop latency',nomidi:true,how:'Automatic, about 10 s. Measures how long the app’s own sound takes to come back from the TP-7, armed and not armed. That round trip is what the looper corrects for. If the sound never comes back, it asks you to play muted strums on 8 clicks instead.',
+  acts:[['Run',runLoopLat]],qs:[]},
+ {id:'lSelf',t:'Loop self-test',nomidi:true,how:'Automatic, about 10 s, no guitar needed. Records one bar of the app’s own clicks through exactly the code your loops use, then checks that every click sits on its beat. Your own loop, if any, is put back afterwards.',
+  acts:[['Run',runLoopSelf]],qs:[],extra:()=>(S.diag.res||{}).lSelf&&(S.diag.res||{}).lSelf.s!=='pass'?latBtn():''},
+ {id:'lGtr',t:'Guitar loop',nomidi:true,how:'You play. After a one-bar count-in, play a short muted strum on every beat for 2 bars. The app records it into the looper, measures how close the strums sit to the beats, then plays your loop with the drums for 4 bars. Your own loop, if any, is put back afterwards.',
+  acts:[['Run',runGuitarLoop]],qs:[['Did you hear your guitar in the loop?',['Yes','No, it was silent','Only the app’s sound']],['Did the loop stay in time with the drums?',['Tight','A little late','A little early','Clearly off']],['How did the loop point sound?',['Seamless','Small click','Gap']]],
+  extra:()=>(S.diag.res||{}).lGtr&&(S.diag.res||{}).lGtr.s!=='pass'?latBtn():''}
+);
 const DIAG_PLAN=[
-  ['Part 1, the main goal: get the guitar into the looper. Record sources line 1 and USB 1',['inScan','looper']],
-  ['Part 2: bar markers that add themselves after each take',['autoMk']],
-  ['When needed: marker timing check',['barcode','mpass','mcheck']]
+  ['Part 1: setup and this phone',['setup','sys']],
+  ['Part 2: recording on the TP-7. MIDI setting cue, TP-7 stopped, cue utility off',['tStart','tFull','tLoopRec']],
+  ['Part 3: the guitar looper. Guitar in the TP-7 line input',['inScan','lLat','lSelf','lGtr']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -2634,12 +2877,15 @@ function diagEnv(){
   return L;
 }
 function diagReport(){
-  const D=S.diag, L=['Tinebox TP-7 diagnostics, '+new Date().toLocaleString(),'App build: '+APP_BUILD,...diagEnv(),`TP-7 firmware: ${D.fw||'(not entered)'}`,`TP-7 MIDI settings: ${D.set||'(not entered)'}`,`TP-7 record settings: ${D.rec||'(not entered)'}`,''];
+  const D=S.diag, cnt={pass:0,warn:0,fail:0,info:0,none:0}; DIAG.forEach(t=>{ cnt[dgV(t)||'none']++; });
+  const L=['Tinebox TP-7 diagnostics, '+new Date().toLocaleString(),'App build: '+APP_BUILD,
+    `Results: ${cnt.pass} pass, ${cnt.warn} check, ${cnt.fail} fail, ${cnt.info} noted, ${cnt.none} not run`,...diagEnv(),`TP-7 firmware: ${D.fw||'(not entered)'}`,''];
   DIAG.forEach(t=>{
     if(t.grp){ L.push(''); L.push(t.grp); }
-    const answered=t.qs.some((q,qi)=>D.ans[t.id+':'+qi]!=null);
-    L.push(t.t+(D.ran[t.id]||answered||(t.id==='input'&&R.inCount)?'':' (not run)'));
+    const answered=t.qs.some((q,qi)=>D.ans[t.id+':'+qi]!=null), v=dgV(t);
+    L.push(t.t+(v?` [${VLABEL[v].toUpperCase()}]`:D.ran[t.id]||answered?'':' (not run)'));
     t.qs.forEach((q,qi)=>{ const a=D.ans[t.id+':'+qi]; L.push(`  ${q[0]} ${a==null?'-':q[1][a]}`); });
+    if(t.id==='setup') setupFixes().forEach(x=>L.push('  To change: '+x));
     if(t.id==='input'){ L.push(`  App received ${R.inCount||0} messages${R.inLog&&R.inLog.length?': '+R.inLog.slice(-5).join(' | '):''}`);
       if(R.inMap) L.push('  Distinct: '+Object.entries(R.inMap).map(([k,e])=>`${k}${e.v.size?' ('+[...e.v].join(', ')+')':''} ×${e.n}`).join('; ')); }
     if(t.id==='looper') L.push('  Looper latency: '+(S.looper.lat==null?'not measured':Math.round(S.looper.lat*1000)+' ms, '+S.looper.latHow));
@@ -2655,19 +2901,19 @@ function updReport(){ clearTimeout(updReport.t); updReport.t=setTimeout(()=>{ co
 function renderDiag(){
   const el=$('#dgIn'); if(!el) return; const D=S.diag, how=t=>typeof t.how==='function'?t.how():t.how;
   el.innerHTML=`<div class="rv-head"><h2 id="dgTitle">TP-7 diagnostics <small style="font-weight:500;color:var(--ink-2);font-size:13px">build ${APP_BUILD}</small></h2><button type="button" class="btn" data-dact="close">Close</button></div>
-  <p class="note">Connect the TP-7 by USB-C and tap Connect MIDI in the TP-7 tab first. Part 1 needs the TP-7 MIDI mode on cue, part 2 on sync. Answer each test, skip any you can't set up, then copy the report and paste it into our chat.</p>
+  <p class="note">Everything runs on this screen. Connect the TP-7 by USB-C, tap Connect MIDI in the TP-7 tab (allow SysEx), and set the TP-7 MIDI setting to cue. Run the tests from top to bottom: each one ends with Pass, Check, Fail or Noted. Part 2 leaves three short test recordings on the TP-7, which you can delete afterwards. Then copy the report and paste it into our chat.</p>
   <div class="orow"><button type="button" class="btn" data-dact="fresh">Start a fresh round</button></div>
   <h3>Your TP-7</h3>
   <label class="dg-l">Firmware version<input class="dg-in" data-df="fw" value="${esc(D.fw)}" placeholder="For example 1.1.11"></label>
-  <label class="dg-l">MIDI settings on the TP-7: names and values you see<textarea class="dg-ta" data-df="set" rows="2">${esc(D.set)}</textarea></label>
-  <label class="dg-l">Record settings: auto start options, metronome, count-in, tempo<textarea class="dg-ta" data-df="rec" rows="2">${esc(D.rec)}</textarea></label>
   <h3>This phone</h3><pre class="dg-pre" id="dgEnv">${esc(diagEnv().join('\n'))}</pre>
-  ${DIAG.map(t=>`${t.grp?`<h3>${esc(t.grp)}</h3>`:''}<div class="dg-card"><h4>${t.t}</h4><p class="dg-how">${esc(how(t))}</p>
+  ${DIAG.map(t=>{ const v=dgV(t); return `${t.grp?`<h3>${esc(t.grp)}</h3>`:''}<div class="dg-card"><h4>${t.t}${v?` <span class="dg-badge ${v}">${VLABEL[v]}</span>`:''}</h4><p class="dg-how">${esc(how(t))}</p>
     ${t.acts.length?`<div class="orow">${t.acts.map((a,i)=>`<button type="button" class="btn" data-dact="run" data-dt="${t.id}" data-ai="${i}">${a[0]}</button>`).join('')}</div>`:''}
     <p class="status" id="dgs-${t.id}">${esc((R.dgStatus&&R.dgStatus[t.id])||'')}</p>
+    ${t.id==='setup'&&setupFixes().length?`<pre class="dg-pre dg-x">${esc(setupFixes().join('\n'))}</pre>`:''}
+    ${D.extra&&D.extra[t.id]&&D.extra[t.id].length?`<pre class="dg-pre dg-x">${esc(D.extra[t.id].join('\n'))}</pre>`:''}
     ${t.extra?t.extra():''}
     ${t.qs.map((q,qi)=>`<p class="dg-q">${q[0]}</p><div class="seg dg-seg" data-dq="${t.id}:${qi}">${q[1].map((o,oi)=>`<button type="button" data-v="${oi}" aria-pressed="${D.ans[t.id+':'+qi]===oi}">${o}</button>`).join('')}</div>`).join('')}
-    <input class="dg-in" data-dn="${t.id}" value="${esc(D.notes[t.id]||'')}" placeholder="Anything else you noticed (optional)"></div>`).join('')}
+    <input class="dg-in" data-dn="${t.id}" value="${esc(D.notes[t.id]||'')}" placeholder="Anything else you noticed (optional)"></div>`; }).join('')}
   <h3>Report</h3>
   <textarea class="dg-report" id="dgReport" readonly aria-label="Diagnostics report">${esc(diagReport())}</textarea>
   <div class="orow"><button type="button" class="take" data-dact="copy">Copy report</button></div>`;
@@ -2680,21 +2926,23 @@ function bindDiag(){
   const root=$('#diag');
   root.addEventListener('click',async e=>{
     const sb=e.target.closest('[data-dq] button');
-    if(sb){ const k=sb.parentElement.dataset.dq; S.diag.ans[k]=+sb.dataset.v; sb.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===sb))); save(); updReport(); return; }
+    if(sb){ const k=sb.parentElement.dataset.dq; S.diag.ans[k]=+sb.dataset.v; sb.parentElement.querySelectorAll('button').forEach(b=>b.setAttribute('aria-pressed',String(b===sb))); save(); if(k.startsWith('setup:')) renderDiag(); else updReport(); return; }
     const b=e.target.closest('[data-dact]'); if(!b) return; const a=b.dataset.dact;
     if(a==='close'){ root.hidden=true; return; }
     if(a==='copy'){ const txt=diagReport(), ta=$('#dgReport'); ta.value=txt; try{ await navigator.clipboard.writeText(txt); toast('Report copied.'); }catch(err){ ta.focus(); ta.select(); toast('Select all the text in the box and copy it.'); } return; }
-    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
+    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
     if(a==='applyMD'){ if(S.diag.mdKind==='take'){ S.tp.takeCueDelay=+b.dataset.v; toast(`Delay for markers set during takes: ${S.tp.takeCueDelay} ms.`); } else { S.tp.mDelay=+b.dataset.v; toast(`Marker pass delay set to ${S.tp.mDelay} ms.`); } S.diag.mdSug=null; save(); renderDiag(); return; }
-    if(a==='apply'){ setOffset(+b.dataset.v); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms for ${offKey()}.`); return; }
+    if(a==='applyLat'){ S.looper.lat=+b.dataset.v/1000; S.looper.latHow='corrected by the diagnostics'; S.diag.latSug=null; save(); renderDiag(); toast(`Looper latency set to ${b.dataset.v} ms.`); return; }
+    if(a==='apply'){ S.diag.tStartSug=null; setOffset(+b.dataset.v); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms for ${offKey()}.`); return; }
     if(a==='run'){
       const t=DIAG.find(x=>x.id===b.dataset.dt), act=t.acts[+b.dataset.ai];
       if(act[2]==='file'){ $('#dgFile').click(); return; }
       if(!t.nomidi&&!midiReady()){ toast('Connect MIDI first: TP-7 tab, Connect MIDI.'); return; }
-      b.disabled=true; setDs(t.id,'Running…');
-      try{ const msg=await act[1](); setDs(t.id,msg||'Done.'); S.diag.ran[t.id]=true; save(); updReport(); }
+      if(R.dgBusy){ toast('Another test is still running.'); return; }
+      R.dgBusy=true; b.disabled=true; setDs(t.id,'Running…');
+      try{ const msg=await act[1](); setDs(t.id,msg||'Done.'); S.diag.ran[t.id]=true; save(); }
       catch(err){ setDs(t.id,'Error: '+err.message); }
-      b.disabled=false;
+      R.dgBusy=false; b.disabled=false; renderDiag();
     }
   });
   root.addEventListener('input',e=>{ const t=e.target; if(t.dataset.df) S.diag[t.dataset.df]=t.value; else if(t.dataset.dn) S.diag.notes[t.dataset.dn]=t.value; else return; save(); updReport(); });
@@ -2757,9 +3005,10 @@ async function runInScan(){
   for(let c=0;c<n;c+=2){ const c2=Math.min(c+1,n-1), g=Math.max(db(gtr[c]),db(gtr[c2])), a=Math.max(db(app[c]),db(app[c2])), v=g-Math.max(a,-70);
     if(g>-50&&v>sc){ sc=v; best=[c,c2]; } }
   if(best){ S.looper.chans=best; save(); lpRenderIn(); const a=Math.max(db(app[best[0]]),db(app[best[1]]));
-    L.push(`The looper now records input ${best[0]+1}${best[1]!==best[0]?'–'+(best[1]+1):''}.`+(a>-40?' Those channels also carry the app’s own sound, so loops will include it.':'')); }
-  else L.push('No input carried the guitar. Check that it is plugged into the TP-7 line input and that the TP-7 input level is up.');
-  dgExtra('inScan',L); return L[L.length-1];
+    L.push(`The looper now records input ${best[0]+1}${best[1]!==best[0]?'–'+(best[1]+1):''}.`+(a>-40?' Those channels also carry the app’s own sound, so loops will include it.':' The app’s own sound stays out of them, so loops hold only the guitar.'));
+    verdict('inScan',a>-40?'warn':'pass',L); }
+  else { L.push('No input carried the guitar. Check: guitar in the TP-7 line input through a DI box, preamp or pedal; TP-7 record sources line 1 and USB 1; input level up.'); verdict('inScan','fail',L); }
+  return L[L.length-1];
 }
 function lpStartCap(secs){ LP.capMax=Math.ceil(secs*ctx.sampleRate/2048)+8; LP.cap=[]; }
 // block timestamps jitter by a few render quanta, but the samples arrive without gaps:
@@ -2769,7 +3018,7 @@ function lpFlat(){ const c=LP.cap||[]; if(!c.length) return null; const sr=ctx.s
 function lpSlice(f,t,dur){ const i0=Math.round((t-f.t0)*f.sr), n=Math.round(dur*f.sr); if(i0<0||i0+n>f.l.length) return null; return [f.l.slice(i0,i0+n),f.r.slice(i0,i0+n)]; }
 function lpStopVoices(t){ LP.voices.forEach(v=>{ try{ v.stop(t); }catch(e){} }); LP.voices=[]; }
 function lpPlay(t){ const s=ctx.createBufferSource(); s.buffer=LP.buf; s.connect(lpGain()); s.start(t); s.stop(t+LP.buf.duration+0.005); LP.voices.push(s); s.onended=()=>{ const i=LP.voices.indexOf(s); if(i>=0) LP.voices.splice(i,1); }; }
-function lpSay(txt){ LP.msg=txt; const e=$('#lpState'); if(e) e.textContent=txt; }
+function lpSay(txt){ LP.msg=txt; const e=$('#lpState'); if(e) e.textContent=txt; if(LP.dgId) setDs(LP.dgId,txt); }
 function lpRender(){
   const p=$('#loopPop'); if(!p) return;
   const lat=S.looper.lat, ll=$('#lpLat'); ll.textContent=lat==null?'Latency not measured':`Latency ${Math.round(lat*1000)} ms`; ll.title=lat==null?'Measure it once before recording.':(S.looper.latHow||'measured');
@@ -2777,47 +3026,64 @@ function lpRender(){
   lpSay(LP.rec?LP.msg:LP.buf?`${LP.steps/16} bar${LP.steps>16?'s':''} at ${LP.bpm} bpm${LP.bpm!==S.bpm?', recorded at another tempo':''}`:'No loop yet'); lpApply(); syncControls();
 }
 async function lpRecord(){
-  initAudio(); if(!ctx||LP.rec) return;
-  if(!await lpOpenInput()) return;
+  initAudio(); if(!ctx||LP.rec) return false;
+  if(!await lpOpenInput()) return false;
   if(S.looper.lat==null) toast('Latency not measured yet, so the loop may sit slightly late. Measure it for a tight loop.');
   const steps=S.looper.bars*16, dur=stepDur(), lat=S.looper.lat==null?0.03:S.looper.lat;
   if(!R.playing){ play(0); await sleep(160); }
-  const target=Math.ceil((Math.max(R.absStep,0)+12)/16)*16, tStart=R.nextTime+(target-R.absStep)*dur, len=steps*dur;
+  const target=Math.ceil((Math.max(R.absStep,0)+12)/16)*16, tStart=R.nextTime+(target-R.absStep)*dur, len=steps*dur, XF=0.01;
+  if(LP.onRec){ try{ LP.onRec(tStart,len); }catch(e){} }
   for(let i=0;i<4;i++){ const ct=tStart-(4-i)*4*dur; if(!S.metro&&ct>ctx.currentTime+0.02) click(ct,i===0); }
-  LP.rec={target,steps,tStart,len}; lpStartCap(len+lat+ (tStart-ctx.currentTime) + 1.5); lpRender();
+  LP.rec={target,steps,tStart,len}; lpStartCap(len+lat+XF+(tStart-ctx.currentTime)+1.5); lpRender();
   const tick=setInterval(()=>{ if(!LP.rec) return clearInterval(tick); const now=ctx.currentTime;
     lpSay(now<tStart?`Count-in: ${Math.ceil((tStart-now)/(4*dur))}`:now<tStart+len?`Recording bar ${Math.min(S.looper.bars,Math.floor((now-tStart)/(16*dur))+1)} of ${S.looper.bars}`:'Finishing…'); },100);
   await sleep((tStart+len+lat-ctx.currentTime)*1000+250);
-  const f=lpFlat(), seg=f&&lpSlice(f,tStart+lat,len); LP.cap=null; clearInterval(tick);
-  if(!seg||!R.playing){ LP.rec=null; lpRender(); toast(R.playing?'The recording did not come through. Check the TP-7 input.':'Playback stopped before the loop finished.'); return; }
-  const sr=ctx.sampleRate, fade=Math.round(0.004*sr), ab=ctx.createBuffer(2,seg[0].length,sr);
-  seg.forEach((ch,c)=>{ for(let i=0;i<fade;i++){ const g=i/fade; ch[i]*=g; ch[ch.length-1-i]*=g; } ab.copyToChannel(ch,c); });
-  let pk=0; for(let i=0;i<seg[0].length;i+=4) pk=Math.max(pk,Math.abs(seg[0][i]),Math.abs(seg[1][i]));
+  const f=lpFlat(), seg=f&&lpSlice(f,tStart+lat-XF,len+XF); LP.cap=null; clearInterval(tick);
+  if(!seg||!R.playing){ LP.rec=null; lpRender(); toast(R.playing?'The recording did not come through. Check the TP-7 input.':'Playback stopped before the loop finished.'); return false; }
+  // seamless loop point: the loop end fades into what was played just before the downbeat,
+  // so wrapping round reproduces the original join and the attack on beat 1 stays intact
+  const sr=ctx.sampleRate, nX=Math.round(XF*sr), n=seg[0].length-nX, ab=ctx.createBuffer(2,n,sr); let pk=0;
+  seg.forEach((ch,c)=>{ const o=new Float32Array(n); o.set(ch.subarray(nX,nX+n)); for(let j=0;j<nX;j++){ const w=j/nX; o[n-nX+j]=o[n-nX+j]*(1-w)+ch[j]*w; }
+    for(let i=0;i<n;i+=4) pk=Math.max(pk,Math.abs(o[i])); ab.copyToChannel(o,c); });
   LP.buf=ab; LP.steps=steps; LP.phase=target%steps; LP.bpm=S.bpm; LP.rec=null;
   // the first pass starts at the next loop boundary the scheduler has not reached yet
-  lpRender(); toast(pk<0.003?'The loop came in nearly silent. In the looper, check that the meter moves when you play, and try another Input if it does not (or run Find the guitar input in the diagnostics).':`Loop recorded: ${S.looper.bars} bar${S.looper.bars>1?'s':''}. It plays whenever the transport runs.`);
+  lpRender(); setTimeout(()=>{},0); toast(pk<0.003?'The loop came in nearly silent. In the looper, check that the meter moves when you play, and try another Input if it does not (or run Find the guitar input in the diagnostics).':`Loop recorded: ${S.looper.bars} bar${S.looper.bars>1?'s':''}. It plays whenever the transport runs.`);
+  return true;
 }
 function lpClear(){ lpStopVoices(ctx?ctx.currentTime:0); LP.buf=null; lpRender(); toast('Loop cleared.'); }
+function lpOnset(f,t,win,thr){ const i0=Math.max(0,Math.round((t-f.t0)*f.sr)), i1=Math.min(f.l.length,i0+Math.round(win*f.sr)); for(let i=i0;i<i1;i++) if(Math.max(Math.abs(f.l[i]),Math.abs(f.r[i]))>thr) return (f.t0+i/f.sr)-t; return null; }
+// the app's own clicks coming back from the TP-7 (only while it is not armed, 8 Oct)
+async function lpLoopback(){
+  lpStartCap(4); const T0=ctx.currentTime+0.3, gap=0.45; for(let i=0;i<4;i++) calClick(T0+i*gap,false);
+  await sleep((T0+4*gap-ctx.currentTime)*1000+400);
+  const f=lpFlat(); LP.cap=null; if(!f) return null;
+  let fl=0; const n=Math.min(f.l.length,Math.round(0.25*f.sr)); for(let i=0;i<n;i++) fl=Math.max(fl,Math.abs(f.l[i]),Math.abs(f.r[i]));
+  const ds=[0,1,2,3].map(i=>lpOnset(f,T0+i*gap,0.3,Math.max(0.02,fl*4))).filter(x=>x!=null).sort((a,b)=>a-b);
+  return ds.length>=3?{med:ds[ds.length>>1],spread:ds[ds.length-1]-ds[0],n:ds.length}:null;
+}
+async function lpStrums(){
+  lpStartCap(8); const T1=ctx.currentTime+1.0, g2=0.6; for(let i=0;i<8;i++) calClick(T1+i*g2,i===0);
+  await sleep((T1+8*g2-ctx.currentTime)*1000+500);
+  const f=lpFlat(); LP.cap=null; if(!f) return null;
+  let fl=0; const n=Math.min(f.l.length,Math.round(0.6*f.sr)); for(let i=0;i<n;i++) fl=Math.max(fl,Math.abs(f.l[i]),Math.abs(f.r[i]));
+  const ds=[0,1,2,3,4,5,6,7].map(i=>lpOnset(f,T1+i*g2-0.08,0.4,Math.max(0.03,fl*3))).filter(x=>x!=null).map(x=>x-0.08).filter(x=>x>-0.05&&x<0.25).sort((a,b)=>a-b);
+  return ds.length>=5?{med:ds[ds.length>>1],spread:ds[ds.length-2]-ds[1],n:ds.length}:null;
+}
+async function lpMeasureCore(say){
+  const was=LP.armed; if(was){ lpArm(false); await sleep(400); }
+  say('Listening for the app’s own clicks…'); const lb=await lpLoopback();
+  if(lb&&lb.spread<0.004){ if(was) lpArm(true); return {lat:lb.med,how:'measured from the app’s own sound',lb}; }
+  if(!LP.armed){ lpArm(true); await sleep(400); }
+  say('Play a short muted strum on each of the 8 clicks.'); await sleep(900);
+  const st=await lpStrums(); if(!was) lpArm(false);
+  if(st) return {lat:Math.max(0,st.med),how:`measured from your playing, spread ${Math.round(st.spread*1000)} ms`,st,lb};
+  return {lat:null,lb};
+}
 async function lpMeasure(){
   initAudio(); if(!ctx||LP.rec) return;
   if(!await lpOpenInput()) return;
-  lpSay('Listening for the app’s own clicks…');
-  lpStartCap(4); const T0=ctx.currentTime+0.3, gap=0.45; for(let i=0;i<4;i++) calClick(T0+i*gap,false);
-  await sleep((T0+4*gap-ctx.currentTime)*1000+400);
-  let f=lpFlat(); LP.cap=null;
-  const onset=(f,t,win,thr)=>{ const i0=Math.max(0,Math.round((t-f.t0)*f.sr)), i1=Math.min(f.l.length,i0+Math.round(win*f.sr)); for(let i=i0;i<i1;i++) if(Math.max(Math.abs(f.l[i]),Math.abs(f.r[i]))>thr) return (f.t0+i/f.sr)-t; return null; };
-  const floor=f?(()=>{ let m=0; const n=Math.min(f.l.length,Math.round(0.25*f.sr)); for(let i=0;i<n;i++) m=Math.max(m,Math.abs(f.l[i])); return m; })():0;
-  let ds=f?[0,1,2,3].map(i=>onset(f,T0+i*gap,0.3,Math.max(0.02,floor*4))).filter(x=>x!=null).sort((a,b)=>a-b):[];
-  if(ds.length>=3&&ds[ds.length-1]-ds[0]<0.004){ S.looper.lat=ds[ds.length>>1]; S.looper.latHow='measured from the app’s own sound'; save(); lpRender(); toast(`Latency ${Math.round(S.looper.lat*1000)} ms.`); return; }
-  // the TP-7 does not send the app's sound back: measure from the player instead
-  lpSay('Play a short muted strum on each of the 8 clicks.');
-  await sleep(900);
-  lpStartCap(8); const T1=ctx.currentTime+1.0, g2=0.6; for(let i=0;i<8;i++) calClick(T1+i*g2,i===0);
-  await sleep((T1+8*g2-ctx.currentTime)*1000+500);
-  f=lpFlat(); LP.cap=null;
-  const fl=f?(()=>{ let m=0; const n=Math.min(f.l.length,Math.round(0.6*f.sr)); for(let i=0;i<n;i++) m=Math.max(m,Math.abs(f.l[i]),Math.abs(f.r[i])); return m; })():0;
-  ds=f?[0,1,2,3,4,5,6,7].map(i=>onset(f,T1+i*g2-0.08,0.4,Math.max(0.03,fl*3))).filter(x=>x!=null).map(x=>x-0.08).filter(x=>x>-0.05&&x<0.25).sort((a,b)=>a-b):[];
-  if(ds.length>=5){ const m=ds[ds.length>>1], sp=ds[ds.length-2]-ds[1]; S.looper.lat=Math.max(0,m); S.looper.latHow=`measured from your playing, spread ${Math.round(sp*1000)} ms`; save(); lpRender(); toast(`Latency ${Math.round(S.looper.lat*1000)} ms.`); }
+  const r=await lpMeasureCore(lpSay);
+  if(r.lat!=null){ S.looper.lat=r.lat; S.looper.latHow=r.how; save(); lpRender(); toast(`Latency ${Math.round(r.lat*1000)} ms.`); }
   else { lpRender(); toast('Could not hear enough strums. Turn the guitar up and try again, or set the latency by hand.'); }
 }
 function lpBuild(){
