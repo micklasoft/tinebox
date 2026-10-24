@@ -1113,7 +1113,7 @@ async function midiConnect(){
 function midiList(){
   const sel=$('#midiOut'), outs=[...R.midi.outputs.values()];
   sel.innerHTML=outs.length?outs.map(o=>`<option value="${esc(o.id)}">${esc(o.name)}</option>`).join(''):'<option value="">No MIDI outputs found</option>';
-  const tp=outs.find(o=>/tp.?7/i.test(o.name||'')), keep=R.midiOutId&&outs.some(o=>o.id===R.midiOutId); if(keep) sel.value=R.midiOutId; else if(tp) sel.value=tp.id;
+  const tp=outs.find(o=>/tp.?7/i.test(o.name||'')&&!/blue/i.test(o.name||''))||outs.find(o=>/tp.?7/i.test(o.name||'')), keep=R.midiOutId&&outs.some(o=>o.id===R.midiOutId); if(keep) sel.value=R.midiOutId; else if(tp) sel.value=tp.id;
   R.midiOutId=sel.value; midiInputs();
   $('#midiStatus').textContent=tp?'TP-7 found. Takes now arm and start it by MIDI.':outs.length?'Pick the TP-7 from the list.':'Connect the TP-7 by USB-C, then press Connect MIDI again.';
 }
@@ -1145,7 +1145,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='43 (23 Oct 2026)';
+const APP_BUILD='45 (24 Oct 2026)';
 const SXOP={session:0x40,play:0x50,stop:0x51}; let sxId=0;
 const SXN={0x40:'Start Session',0x50:'Play',0x51:'Stop'}, sxSent={};
 /* TP-7 SysEx, decoded (14 Oct): replies echo the request id with 0x20 instead of 0x60 and carry [status, key, value];
@@ -1164,18 +1164,25 @@ function sxText(d){
     if(v[0]===0x4B&&v.length>16){ const parts=[]; let t=''; for(let i=16;i<v.length;i++){ if(v[i]===0){ if(t) parts.push(t); t=''; } else t+=String.fromCharCode(v[i]); } if(t) parts.push(t);
       const p2=x=>String(x).padStart(2,'0');
       return `notice K: ${parts.join('/')}, ${u32(1)} Hz, ${u32(5)} frames (${(u32(5)/Math.max(1,u32(1))).toFixed(2)} s), byte ${v[9]}, dated ${1980+v[10]}-${p2(v[11]+1)}-${p2(v[12])} ${p2(v[13])}:${p2(v[14])}:${p2(v[15])}`; }
+    if(v[0]===0x4D&&v.length>=5) return `position ${u32(1)} ms`;
+    if(v[0]===0x4F) return `armed = ${v[1]}`;
+    if(v[0]===0x4E) return `playing = ${v[1]}`;
     if(v.length===5) return `notice ${ch(v[0])} = ${u32(1)}`;
     return `notice ${ch(v[0])} = ${v.slice(1).join(' ')}`; }
   return hx(d);
 }
 const CCN={14:'arm',16:'cue record',17:'loop',120:'mute track'};
+const u32le=(v,i)=>((v[i]|(v[i+1]<<8)|(v[i+2]<<16)|(v[i+3]<<24))>>>0);
+function sxPosOf(d){ d=[...d]; if(d.length<12||d[5]!==0x40||(d[6]&0x60)!==0x40||d[8]!==0x7F) return null; const v=sx7(d.slice(9,-1)); return v[0]===0x4D&&v.length>=5?u32le(v,1):null; }
 function sxFile(d){ d=[...d]; if(d[0]!==0xF0||d.length<20||d[2]!==0x20||d[3]!==0x76||d[4]!==0x19||(d[6]&0x60)!==0x40) return null;
   const v=sx7(d.slice(9,-1)); if(v[0]!==0x4B||v.length<17) return null;
   const u32=i=>((v[i]|(v[i+1]<<8)|(v[i+2]<<16)|(v[i+3]<<24))>>>0), parts=[]; let t='';
   for(let i=16;i<v.length;i++){ if(v[i]===0){ if(t) parts.push(t); t=''; } else t+=String.fromCharCode(v[i]); } if(t) parts.push(t);
   return {path:parts.join('/'),sr:u32(1),frames:u32(5),b9:v[9]}; }
-function sxLog(dir,d,t){ const id=R.dgRun; if(!id||/^sx(Map|Del|Write)$/.test(id)) return; const a=(S.diag.sx=S.diag.sx||{})[id]||(S.diag.sx[id]=[]); if(a.length>=160) return;
-  a.push({t:Math.round(t),s:(dir==='in'?'in  ':'out ')+(d[0]===0xF0?sxText(d):`CC ${d[1]} ${CCN[d[1]]||''} = ${d[2]}`)}); }
+function sxLog(dir,d,t){ const id=R.dgRun; if(!id||/^sx(Map|Del|Write|Step)$/.test(id)) return; const a=(S.diag.sx=S.diag.sx||{})[id]||(S.diag.sx[id]=[]); if(a.length>=160) return;
+  const txt=d[0]===0xF0?sxText(d):`CC ${d[1]} ${CCN[d[1]]||''} = ${d[2]}`, pm=/^position (\d+) ms$/.exec(txt), last=a[a.length-1];
+  if(pm&&dir==='in'&&last&&last.run){ last.n++; last.s=`in  position ${last.first} → ${pm[1]} ms (${last.n} updates)`; return; }
+  a.push(pm&&dir==='in'?{t:Math.round(t),s:'in  '+txt,run:true,first:pm[1],n:1}:{t:Math.round(t),s:(dir==='in'?'in  ':'out ')+txt}); }
 function sxGreet(){ sxId=sxId%4095+1; sxSent[sxId]='greet'; return [0xF0,0x00,0x20,0x76,0x19,0x40,0x60|((sxId>>7)&0x1F),sxId&0x7F,0x01,0xF7]; }
 function sxGreetReply(d){ d=[...d]; if(d[0]!==0xF0||d.length<11||d[2]!==0x20||d[3]!==0x76||d[4]!==0x19||(d[6]&0x60)!==0x20||d[8]!==0x01) return null;
   const t=String.fromCharCode(...sx7(d.slice(10,-1)).filter(x=>x>=32&&x<127)), o={}; t.split(';').forEach(kv=>{ const i=kv.indexOf(':'); if(i>0) o[kv.slice(0,i).replace(/^[^a-z]+/i,'')]=kv.slice(i+1); }); return o.product||o.sw_version?o:null; }
@@ -1183,7 +1190,14 @@ function sxMsg(op){ sxId=sxId%4095+1; sxSent[sxId]=op; return [0xF0,0x00,0x20,0x
 function tapeArm(m,at){ midiSend([0xB0,14,127],at); if(m==='sysex') midiSend(sxMsg(SXOP.session),at); }
 function tapeStart(m,at){ if(m==='start') midiSend([0xFA],at); else if(m==='rocker') midiSend([0xB0,18,68],at); else if(m==='sysex') midiSend(sxMsg(SXOP.play),at); }
 function tapeStop(m,at){ if(m==='start'||m==='arm') midiSend([0xFC],at); else if(m==='rocker') midiSend([0xB0,18,64],at); else if(m==='sysex') midiSend(sxMsg(SXOP.stop),at); }
-async function tapeRewind(){ if(S.tp.startMode!=='sysex') return; mNow([0xB0,14,0]); LP.armed=false; mNow(sxMsg(SXOP.stop)); await sleep(250); mNow(sxMsg(SXOP.stop)); await sleep(400); }
+// two stops rewind in normal mode; in edit mode (24 Oct) they leave the tape where it stopped, so report the position (Start Session sends it when it is not 0)
+async function tpPosNow(){ R.tpPos=null; mNow(sxMsg(SXOP.session)); await sleep(300); return R.tpPos==null?0:R.tpPos; }
+async function tapeRewind(){ if(S.tp.startMode!=='sysex') return null; mNow([0xB0,14,0]); LP.armed=false; mNow(sxMsg(SXOP.stop)); await sleep(250); mNow(sxMsg(SXOP.stop)); await sleep(400); return R.sysex===true?await tpPosNow():null; }
+async function tpEnsureStart(id){ let p=await tapeRewind(); if(p==null||p<=150) return true;
+  const rw=S.diag.rw4a||(S.diag.rw4a={ok:0,no:0}); mNow(sxReq(0x7F,[0x4a]).bytes); await sleep(600); const p2=await tpPosNow();
+  if(p2<=150){ rw.ok++; save(); return true; } rw.no++; save(); p=p2;
+  for(let i=30;i>0;i--){ setDs(id,`The TP-7 stayed at ${(p/1000).toFixed(1)} s: in edit mode SysEx stop does not rewind. Bring the tape back to the start by hand; waiting ${i} s…`); await sleep(1000); p=await tpPosNow(); if(p<=150) return true; }
+  return false; }
 function playNow(){ if(S.tp.startMode==='sysex'){ mNow(sxMsg(SXOP.session)); mNow(sxMsg(SXOP.play)); } else mNow([0xFA]); }
 function stopNow(){ if(S.tp.startMode==='sysex') mNow(sxMsg(SXOP.stop)); else mNow([0xFC]); }
 function testStart(){
@@ -1414,7 +1428,6 @@ function buildPanels(){
     <p class="note">Denser markers let the take review jump the TP-7 more precisely. A take holds up to 92 markers. If the TP-7 stops taking them, choose wider spacing.</p>
     <div class="orow"><span class="lbl">Timing offset</span><button type="button" class="btn sm" data-act="off-" aria-label="Send MIDI earlier">−</button><output id="offOut" style="min-width:56px;text-align:center">0 ms</output><button type="button" class="btn sm" data-act="off+" aria-label="Send MIDI later">+</button></div>
     <p class="note">Shifts every MIDI message against the audio. Leave it at 0 unless the take review shows markers landing early or late.</p>
-    <div class="orow"><span class="lbl">Set TP-7 loop on first pass of</span>${segH('tp.midiLoop',[[-1,'Off'],[0,'A'],[1,'B'],[2,'C'],[3,'D']])}</div>
     <div class="orow"><span class="lbl">Remote</span><button type="button" class="btn" data-act="mRecOn">Arm</button><button type="button" class="btn" data-act="mRecOff">Disarm</button><button type="button" class="btn" data-act="mStart">Start</button><button type="button" class="btn" data-act="mStop">Stop</button><button type="button" class="btn" data-act="mLoopOff">Loop off</button></div>
   </details>
  </div>
@@ -1732,7 +1745,8 @@ async function rvMarkerPass(kArg,auto){
     toast('This take already has cues on the TP-7. With cues, the TP-7 rewinds to its current cue, not the start, so a new pass would land wrong. Delete them on the TP-7 first, then tap Add bar markers again.'); return; }
   R.mpAgain=false;
   initAudio(); stopReview(); R.clockMute=true;
-  R.mpass={k,auto:!!auto,msg:'Rewinding the TP-7 to the start of the take…'}; mpUi(k); await tapeRewind(); R.mpass=null;
+  R.mpass={k,auto:!!auto,msg:'Rewinding the TP-7 to the start of the take…'}; mpUi(k); const p0=await tapeRewind(); R.mpass=null;
+  if(p0>150){ R.clockMute=false; mpUi(k); toast(`The TP-7 stayed at ${(p0/1000).toFixed(1)} s instead of rewinding (it does that in edit mode). Bring it back to the start, then tap Add bar markers again.`); return; }
   const bd=barDurOf(k), bars=Math.max(1,Math.floor((k.dur+1e-3)/bd)), ev=S.tp.cueEvery;
   const secs=new Set((k.cues||[]).map(c=>Math.round(c.t/bd))), list=[];
   for(let b=0;b<bars&&list.length<128;b++) if(ev==='section'?secs.has(b)||b===0:b%(+ev||1)===0) list.push(b);
@@ -1840,7 +1854,7 @@ function midiInputs(){
     if(d[0]!==0xF8){ const key=d.length>1?`${d[0].toString(16)} ${d[1]}`:d[0].toString(16), m=(R.inMap=R.inMap||{}), e=m[key]||(m[key]={n:0,v:new Set()}); e.n++; if(d.length>2&&e.v.size<12) e.v.add(d[2]); }
     if(/tp.?7/i.test(port)){ if(d[0]===0xF8) tpClockTick(now); else if(d[0]===0xFA||d[0]===0xFB) R.tpClk=[]; }
     if(R.capOn){ R.cap2.push({t:now,port,d}); if((d[0]===0xFA||d[0]===0xFB)&&R.capId) setDs(R.capId,`Start message from ${port} just arrived.`); }
-    if(d[0]===0xF0&&/tp.?7/i.test(port)){ if(R.sxProbe) R.sxProbe(d,now); sxLog('in',d,now); const fi=sxFile(d); if(fi) R.tpFile=fi;
+    if(d[0]===0xF0&&/tp.?7/i.test(port)&&!/blue/i.test(port)){ if(R.sxProbe) R.sxProbe(d,now); sxLog('in',d,now); const fi=sxFile(d); if(fi) R.tpFile=fi; const po=sxPosOf(d); if(po!=null) R.tpPos=po;
       const gi=sxGreetReply(d); if(gi){ R.tpInfo=gi; if(gi.sw_version&&!S.diag.fw){ S.diag.fw=gi.sw_version; save(); } } }
     (R.waiters||[]).slice().forEach(w=>{ if(w.test({port,d})){ R.waiters.splice(R.waiters.indexOf(w),1); w.res({t:now,port,d}); } });
     const o=$('#dgInOut'); if(o) o.textContent=`${R.inCount} received. Last: ${port}: ${hx}`;
@@ -2551,7 +2565,7 @@ async function runSysCheck(){
     if(R.tpInfo) P.push(`The TP-7 identifies itself over SysEx: ${R.tpInfo.product||'TP-7'}, firmware ${R.tpInfo.sw_version||'?'}${R.tpInfo.mode?', mode '+R.tpInfo.mode:''}.`); else W.push('The TP-7 did not answer the identity request (SysEx greet).'); }
   if(!ctx||ctx.state!=='running') F.push('Audio is not running. Tap anywhere on the screen, then run this again.');
   else { P.push(`Audio: ${ctx.sampleRate/1000} kHz, ${ctx.destination.maxChannelCount} output channel${ctx.destination.maxChannelCount>1?'s':''}, output latency ${msTxt(ctx.outputLatency)}.`);
-    if(ctx.destination.maxChannelCount<6) W.push(`Only ${ctx.destination.maxChannelCount} output channel${ctx.destination.maxChannelCount>1?'s':''}: sending chords and drums to separate TP-7 tracks (test 16) needs 6. Earlier sessions with the TP-7 at 96 kHz had 6.`); }
+    if(ctx.destination.maxChannelCount<4) W.push(`Only ${ctx.destination.maxChannelCount} output channel${ctx.destination.maxChannelCount>1?'s':''}: sending the app's parts to separate TP-7 tracks (test 11) needs at least 4.`); }
   const k=offKey(), offs=S.tp.offsets||{};
   if(offs[k]!=null) P.push(`Timing offset for this audio setup (${k}): ${offs[k]} ms.`);
   else if(offs[setupKey()]!=null) W.push(`Timing offset for ${k} is borrowed from MIDI start (${offs[setupKey()]} ms). Run Start timing to measure it.`);
@@ -2628,28 +2642,6 @@ async function runFullTake(){
   return s==='pass'?'Take, automatic markers and jumps all work, on the beat.':`Markers sit ${Math.abs(m.med).toFixed(1)} ms ${m.med>0?'late':'early'}: tap the button below.`;
 }
 
-async function runTpLoopRec(){
-  const e=tp7Ready(); if(e) return e; initAudio(); if(LP.armed) lpArm(false);
-  if(!(await lpOpenInput())) return 'Audio input was blocked.';
-  const bpm=S.bpm, bar=240/bpm, FQ=[500,700,900,1100], D=ctx.currentTime+1.5, E=D+4*bar+0.3;
-  mNow([0xB0,17,0]); tapeArm('sysex'); tapeStart('sysex',D);
-  const o=ctx.createOscillator(), g=ctx.createGain(); g.gain.value=0.15; FQ.forEach((f,b)=>o.frequency.setValueAtTime(f,D+b*bar)); o.connect(g); g.connect(A.fixed); o.start(D); o.stop(D+4*bar);
-  midiSend([0xB0,17,1],D+bar); midiSend([0xB0,17,2],D+3*bar);
-  tapeStop('sysex',E); midiSend([0xB0,14,0],E+0.05);
-  setDs('tLoopRec','Recording 4 bars, one tone per bar, with loop points at bars 2 and 4…');
-  await sleep((E-ctx.currentTime)*1000+1500);
-  setDs('tLoopRec','Playing it back to hear whether the TP-7 loops…');
-  await tapeRewind(); const secs=7*bar; lpStartCap(secs+1); mNow(sxMsg(SXOP.session)); mNow(sxMsg(SXOP.play)); await sleep(secs*1000); mNow(sxMsg(SXOP.stop)); await sleep(200); mNow([0xB0,17,0]);
-  const f=lpFlat(); LP.cap=null; if(!f){ verdict('tLoopRec','fail',['Nothing came back from the TP-7.',SRC_HINT()]); return 'Nothing came back.'; }
-  const sr=f.sr, W=Math.round(0.1*sr), seq=[];
-  for(let i=0;i+W<=f.l.length;i+=W){ let best=-1,bv=0,tot=0; for(let q=0;q<4;q++){ const v=goertzel(f.l,i,W,FQ[q],sr); tot+=v; if(v>bv){ bv=v; best=q; } } seq.push(bv>1e-5&&bv>0.6*tot?best:-1); }
-  const runs=[]; let cur=-2,cn=0; seq.concat([-2]).forEach(x=>{ if(x===cur) cn++; else { if(cur>=0&&cn>=3&&runs[runs.length-1]!==cur) runs.push(cur); cur=x; cn=1; } });
-  const heard=runs.map(x=>x+1), looped=heard.some((x,i)=>i>0&&x===2&&heard[i-1]===3);
-  if(!heard.length){ verdict('tLoopRec','fail',['The app heard no playback. If you heard it on the TP-7:',SRC_HINT(),'Otherwise check that the TP-7 is on the new recording, with the cue utility off.']); return 'No playback heard.'; }
-  if(looped){ verdict('tLoopRec','pass',[`Heard bars ${heard.join(' ')}: the TP-7 keeps loop points sent during a take, so the take setting "Set TP-7 loop on first pass of" works.`]); return 'Loop points sent during a take work.'; }
-  verdict('tLoopRec','info',[`Heard bars ${heard.join(' ')}: no loop. The TP-7 ignores loop points sent while it records, like cues, so the take setting "Set TP-7 loop on first pass of" does nothing and can go.`]);
-  return 'Loop points during a take are ignored.';
-}
 
 async function runLoopLat(){
   initAudio(); if(R.playing||R.take||R.mpass||LP.rec) return 'Stop playback first.';
@@ -2743,8 +2735,6 @@ DIAG.push(
   acts:[['Run',runStartTiming]],qs:[],extra:()=>S.diag.tStartSug!=null?`<button type="button" class="btn" data-dact="apply" data-v="${S.diag.tStartSug}">Use ${S.diag.tStartSug} ms as timing offset</button>`:''},
  {id:'tFull',t:'Full take with automatic bar markers',how:'Automatic, about a minute. Runs a real take through the Record tab’s own code: about 8 bars, music muted, a bar code playing instead. When the take ends, the marker pass must start by itself. The test then triggers every marker and measures where it lands. The diagnostics take is removed from your take list afterwards; the TP-7 keeps the file.',
   acts:[['Run',runFullTake]],qs:[],extra:()=>S.diag.mdSug!=null&&S.diag.mdKind==='pass'?`<button type="button" class="btn" data-dact="applyMD" data-v="${S.diag.mdSug}">Use ${S.diag.mdSug} ms as marker delay</button>`:''},
- {id:'tLoopRec',t:'TP-7 loop set during a take',how:'Automatic, about 40 s. Records 4 bars with one tone per bar and sends TP-7 loop points at bars 2 and 4 while recording, then plays the recording back and listens for a loop. Decides whether the take setting that loops a section on the TP-7 stays.',
-  acts:[['Run',runTpLoopRec]],qs:[]},
  {id:'lLat',t:'Loop latency',nomidi:true,how:'Automatic, about 5 s. With the TP-7 not armed, measures how long the app’s own clicks take to come back from it. That round trip is what the looper corrects for.',
   acts:[['Run',runLoopLat]],qs:[]},
  {id:'lSelf',t:'Loop self-test',nomidi:true,how:'Automatic, about 10 s, no guitar needed. Records one bar of the app’s own clicks through exactly the code your loops use, then checks that every click sits on its beat. Your own loop, if any, is put back afterwards.',
@@ -2770,8 +2760,9 @@ async function p4Pass(id,f,label,o){
   // the TP-7 records from wherever the tape stands: two SysEx stops (stop, then rewind) put it at the start, without disarming
   // once a file has markers, stop rewinds to the current marker, so select marker 1 first (tap its cue note)
   if(o.rewind!==false){ if(S.diag.p4&&S.diag.p4.cues){ mNow([0x90,0,100]); await sleep(120); mNow([0x80,0,0]); await sleep(200); }
-    mNow(sxMsg(SXOP.stop)); await sleep(250); mNow(sxMsg(SXOP.stop)); await sleep(400); }
+    if(!(await tpEnsureStart(id))) dgExtra(id,['The TP-7 did not get back to the start, so a pass started where the tape stood.']); }
   const beat=60/S.bpm, n=o.beats||P4.beats, D=ctx.currentTime+1.6, E=D+n*beat+0.3;
+  R.tpFile=null; R.passFile0=null; setTimeout(()=>{ R.passFile0=R.tpFile; },Math.max(0,(D-ctx.currentTime)*1000+150));
   if(o.arm!==false) midiSend([0xB0,14,127],D-0.8);
   midiSend(sxMsg(SXOP.session),D-0.25); midiSend(sxMsg(SXOP.play),D);
   for(let i=0;i<n;i++) (o.freqs||[f]).forEach((ff,q)=>burst(D+i*beat,ff,o.outs?o.outs[q]:null));
@@ -2781,7 +2772,7 @@ async function p4Pass(id,f,label,o){
 // play the current recording from the start (or from cue 0 once markers exist) and capture what comes back
 async function p4Listen(id,secs,o){
   o=o||{}; if(!(await lpOpenInput())) return null; if(LP.armed) lpArm(false); mNow([0xB0,14,0]);
-  if(!o.cue0) await tapeRewind(); lpStartCap(secs+2);
+  if(!o.cue0) await tpEnsureStart(id); lpStartCap(secs+2);
   if(o.cue0) mNow([0x90,0,100]); else { mNow(sxMsg(SXOP.session)); mNow(sxMsg(SXOP.play)); }
   if(o.solo) o.mute=[1,2,3,4,5,6].filter(k=>k!==o.solo);
   if(o.mute) setTimeout(()=>o.mute.forEach(ch=>mNow([0xB0|(ch-1),120,127])),150);
@@ -2828,51 +2819,16 @@ function p4Outcome(r,same,ix){
   return {kind:'silent',txt:'not heard: nothing came back'};
 }
 const p4Align=(r,ix)=>r&&r[ix]&&r[ix].m.length?`Against pass 1: ${msR(r[ix].m.map(x=>x.dt*1000))}.`:'';
-async function runSame1(){
-  const e=p4Need(); if(e) return e;
-  R.tpFile=null; await p4Pass('tSame',P4.F.p1,'Pass 1 (low bursts)'); const f0=R.tpFile, f1=await tpFileNow();
-  S.diag.p4={f1,bpm:S.bpm,l1:`Pass 1 made the recording ${fileTxt(f1)} (before, the TP-7 had ${fileTxt(f0)} loaded).`}; save();
-  dgExtra('tSame',[S.diag.p4.l1]); return 'Pass 1 recorded. Now Run 2, without touching the TP-7.';
-}
-async function runSame2(){
-  const e=p4Need(); if(e) return e; const P=S.diag.p4; if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
-  R.tpFile=null; await p4Pass('tSame',P4.F.p2,'Pass 2, from the app only'); const fa=R.tpFile, fb=await tpFileNow();
-  const r=await p4Check('tSame',[P4.F.p1,P4.F.p2]), sf=sameFile(P.f1,fb), oc=p4Outcome(r,sf!=null?sf:sameFile(fa,fb),1); P.same=oc.kind; save();
-  const L=[P.l1,`Pass 2 (arm, Start Session, Play, all from the app) ${oc.txt}. File after: ${fileTxt(fb)}.`]; const al=p4Align(r,1); if(oc.kind==='overdub'&&al) L.push(al);
-  const s=oc.kind==='overdub'?'pass':oc.kind==='silent'?'fail':'info';
-  L.push(s==='pass'?'Nothing needs doing on the TP-7: the app adds passes to the loaded recording by itself.':s==='fail'?SRC_HINT():'The app alone cannot add a pass to the loaded recording. Test 12 checks whether preparing the TP-7 once by hand is enough.');
-  verdict('tSame',s,L); return s==='pass'?'The app alone overdubs: nothing to do on the TP-7.':`Pass 2 ${oc.txt}.`;
-}
-async function runPrep(ix){
-  const e=p4Need(); if(e) return e; const P=S.diag.p4; if(!P) return 'Run test 11 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
-  const f=ix===2?P4.F.p3:P4.F.p4, tag=ix===2?'Pass 3':'Pass 4';
-  R.tpFile=null; await p4Pass('tPrep',f,`${tag}, prepared ${ix===2?'by hand':'once, nothing touched since'}`,{rewind:ix!==2}); const fa=R.tpFile, fb=await tpFileNow();
-  const r=await p4Check('tPrep',[P4.F.p1,P4.F.p2,P4.F.p3,P4.F.p4].slice(0,ix+1)), oc=p4Outcome(r,sameFile(fa,fb),ix);
-  P['prep'+ix]=oc.kind; P['prepL'+ix]=[`${tag} ${oc.txt}. File before: ${fileTxt(fa)}, after: ${fileTxt(fb)}.`,...(oc.kind==='overdub'&&p4Align(r,ix)?[p4Align(r,ix)]:[])]; save();
-  const L=[...(P.prepL2||[]),...(ix===3?P.prepL3||[]:[])];
-  if(ix===2){ dgExtra('tPrep',L); return `${tag} ${oc.txt}. Now Run 2 without touching the TP-7.`; }
-  const a2=P.prep2==='overdub', a3=P.prep3==='overdub', s=a2&&a3?'pass':a2||a3?'warn':'fail';
-  L.push(a2&&a3?'One preparation by hand is enough: every pass the app starts after it overdubs onto track 1.':a2?'The preparation lasts for one pass only: it has to be repeated on the TP-7 before every pass.':a3?'Pass 4 overdubbed but pass 3 did not: run both again.':'Even after preparing by hand, passes started by the app do not overdub.');
-  verdict('tPrep',s,L); return L[L.length-1];
-}
-async function runTrack2(){
-  const e=p4Need(); if(e) return e; const P=S.diag.p4; if(!P) return 'Run test 11 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
-  R.tpFile=null; await p4Pass('tTrack2',P4.F.t2,'A pass for track 2'); const fa=R.tpFile, fb=await tpFileNow();
-  const r=await p4Check('tTrack2',[P4.F.p1,P4.F.t2],{mute:[1],say:'Playing it back with track 1 muted, so you hear track 2. Listen…'});
-  const L=[`File before: ${fileTxt(fa)}, after: ${fileTxt(fb)}.`];
-  if(fa&&fb&&fa.b9!==fb.b9) L.push(`Byte 9 of the file notice went from ${fa.b9} to ${fb.b9}: it probably counts tracks, so the app can check tracks without you reading the screen.`);
-  if(r){ L.push(`Track 1 over USB: ${r[0].n} low bursts, ${r[1].n} track-2 bursts.`); L.push(r[1].n>=8?'This pass landed on track 1, not on a new track.':'Track 1 is unchanged.'); }
-  verdict('tTrack2','info',[...L,'The app cannot hear track 2 (USB channels 3 and 4). Your answers decide the result.']); return 'Done: answer what you heard.';
-}
 async function runPunch1(){
-  const e=p4Need(); if(e) return e; const P=S.diag.p4; if(!P) return 'Run test 11 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
+  const e=p4Need(); if(e) return e; const P=S.diag.p4; if(!P) return 'Run Base in test 9 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
   const beat=60/S.bpm, k={n:'test',label:'Punch test',bpm:S.bpm,dur:P4.beats*beat,cues:[],mcues:[],cueEvery:1};
+  if(!(await tpEnsureStart('tPunch'))) return 'The TP-7 did not get back to the start.';
   const keep=snapK(['tp.cueEvery']); setK('tp.cueEvery',1); setDs('tPunch','Placing a marker on each of the 4 bars…');
   await rvMarkerPass(k,false); await waitFor(()=>!R.mpass,(P4.beats*beat+15)*1000); restoreK(keep);
   if(!k.markerPass){ dgExtra('tPunch',['The marker pass did not finish.']); return 'The marker pass did not finish.'; }
-  P.cues=true; P.punch={}; P.fP=await tpFileNow(); save(); dgExtra('tPunch',['Markers placed on bars 1 to 4 (cue notes 0 to 3).']); return 'Markers placed. Now Run 2.';
+  P.cues=true; P.punch={}; P.fP=await tpFileNow(); save(); dgExtra('tPunch',['Markers placed on bars 1 to 4 (cue notes 0 to 3).']); return 'Markers placed. Now put the TP-7 in edit mode with overdub (by hand, or Prepare from the app), then Run A.';
 }
-const PUNCH={A:'arm, then hold the bar 3 cue note',B:'hold the bar 3 cue note, then arm while it plays',C:'tap the bar 3 cue, stop (rewinds to it), arm, Start Session, Play',D:'armed from cue 3 by hand, then Start Session and Play from the app'};
+const PUNCH={A:'arm, then hold the bar 3 cue note',B:'hold the bar 3 cue note, then arm while it plays',C:'tap the bar 3 cue, stop, arm, Start Session, Play',D:'armed from cue 3 by hand, then Start Session and Play from the app'};
 async function runPunch(tag){
   const e=p4Need(); if(e) return e; const P=S.diag.p4; if(!P||!P.cues) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
   const beat=60/S.bpm, bar=4*beat, f=P4.F[tag]; let fa=null;
@@ -2886,7 +2842,7 @@ async function runPunch(tag){
   await sleep((T+bar-ctx.currentTime)*1000+(tag==='C'?2600:tag==='D'?2800:1200)); mNow([0xB0,14,0]); mNow(sxMsg(SXOP.stop)); await sleep(400);
   if(tag==='D') fa=R.tpFile; const fb=await tpFileNow(), same=sameFile(P.fP,fb);
   const L=[`Attempt ${tag} (${PUNCH[tag]}): file ${fileTxt(fb)}.`]; let res={kind:'none'};
-  if(same===false){ L.push('It started a new recording. Before the next attempt, go back to the test recording on the TP-7 ('+fileTxt(P.fP)+').'); res={kind:'new'}; }
+  if(same===false){ L.push('It started a new recording, so the TP-7 was not in edit mode. Before the next attempt, go back to the test recording on the TP-7 ('+fileTxt(P.fP)+') and enter edit mode again.'); res={kind:'new'}; }
   else { const r=await p4Check('tPunch',[P4.F.p1,f],{cue0:true}); if(r){ const m=r[1].m, bars=barsOf(m);
       res={kind:m.length>=2?(bars==='3'?'punch':'elsewhere'):'none',bars,n:r[1].n,pass1:barsOf(r[0].m)};
       L.push(m.length?`${r[1].n} bursts recorded, in bar ${bars}; pass 1 still heard in bar ${res.pass1}.`:'Nothing was recorded.'); if(m.length) L.push(`Against the bar grid: ${msR(m.map(x=>x.dt*1000))}.`);
@@ -2899,20 +2855,12 @@ async function runPunch(tag){
   if(s) verdict('tPunch',s,all); else dgExtra('tPunch',all);
   return res.kind==='punch'?`Attempt ${tag} punched in at bar 3.`:res.kind==='new'?`Attempt ${tag} made a new recording.`:`Attempt ${tag}: no punch-in at bar 3.`;
 }
-async function runMonitor(){
-  const e=p4Need(); if(e) return e; const beat=60/S.bpm;
-  R.tpFile=null; await p4Pass('tMonitor',P4.F.mon,'Recording line 1 while the app plays bursts',{beats:8}); const fa=R.tpFile, fb=await tpFileNow();
-  const cap=await p4Listen('tMonitor',8*beat+1); const L=[`File before: ${fileTxt(fa)}, after: ${fileTxt(fb)}${sameFile(fa,fb)===false?' (a new recording)':sameFile(fa,fb)?' (added to the loaded recording)':''}.`];
-  if(cap){ const [a]=toneScan(cap,[P4.F.mon]); L.push(a.on.length>=4?`The recording holds the app's bursts (${a.on.length}): USB 1 is still a record source.`:'The recording does not hold the app\'s bursts, so only line 1 was recorded.'); }
-  verdict('tMonitor','info',[...L,'Your answer decides whether you hear Tinebox while recording only the guitar.']);
-  return 'Done: answer below.';
-}
 // one fixed setup: line 1 plus USB 1, 2 and 3 as record sources; the app picks the track by picking the USB pair
 async function p4Multi(id,freqs,pairs,label){
   const dst=ctx.destination, keep={c:dst.channelCount,i:dst.channelInterpretation}; let mg=null; const outs=[];
-  try{ dst.channelCount=6; dst.channelInterpretation='discrete'; mg=ctx.createChannelMerger(6); mg.connect(dst);
+  const nc=Math.min(6,dst.maxChannelCount); try{ dst.channelCount=nc; dst.channelInterpretation='discrete'; mg=ctx.createChannelMerger(nc); mg.connect(dst);
     pairs.forEach(p=>{ const g=ctx.createGain(); g.connect(mg,0,2*p); g.connect(mg,0,2*p+1); outs.push(g); }); }
-  catch(x){ try{ if(mg) mg.disconnect(); dst.channelCount=keep.c; dst.channelInterpretation=keep.i; }catch(y){} return 'The browser refused a 6-channel output: '+x.message; }
+  catch(x){ try{ if(mg) mg.disconnect(); dst.channelCount=keep.c; dst.channelInterpretation=keep.i; }catch(y){} return `The browser refused a ${nc}-channel output: `+x.message; }
   await p4Pass(id,freqs[0],label,{beats:8,freqs,outs});
   try{ mg.disconnect(); dst.channelCount=keep.c; dst.channelInterpretation=keep.i; }catch(x){}
   return '';
@@ -2923,58 +2871,21 @@ async function p4Solos(id,list){ const beat=60/S.bpm; let cap1=null;
 async function runFixed1(){
   const e=p4Need(); if(e) return e; const n=ctx.destination.maxChannelCount, beat=60/S.bpm;
   const L=[`The phone offers ${n} output channel${n>1?'s':''} at ${ctx.sampleRate/1000} kHz.`];
-  if(n<6){ verdict('tFixed','fail',[...L,'This setup needs 6 (three USB pairs). Earlier sessions with the TP-7 at 96 kHz reported 6. Note what was different, for example which was connected or opened first.']); return `Only ${n} output channels.`; }
-  R.tpFile=null; const err=await p4Multi('tFixed',[P4.F.x1,P4.F.x2,P4.F.x3],[0,1,2],'Pass 1: low tone on USB 1, mid on USB 2, high on USB 3, nothing on line 1'); R.tpFileBefore=R.tpFile;
+  if(n<4){ verdict('tFixed','fail',[...L,'This setup needs at least 4 (two USB pairs). At the end of the 24 Oct report the phone offered 6; note what you did differently when it does.']); return `Only ${n} output channel${n>1?'s':''}.`; }
+  const err=await p4Multi('tFixed',[P4.F.x1,P4.F.x2],[0,1],'Pass 1: low tone on USB 1, mid tone on USB 2, nothing on line 1'); R.tpFileBefore=R.passFile0;
   if(err){ verdict('tFixed','fail',[...L,err]); return err; }
   const f1=await tpFileNow(); S.diag.p4f={bpm:S.bpm,f1}; save(); L.push(`Recording: ${fileTxt(f1)}${R.tpFileBefore&&sameFile(R.tpFileBefore,f1)?' (added to the recording that was loaded, not a new one)':''}.`);
-  const cap1=await p4Solos('tFixed',[1,2,3,4]);
-  if(cap1){ const sc=toneScan(cap1,[P4.F.x1,P4.F.x2,P4.F.x3]); L.push('Track 1 over USB holds: '+sc.map(x=>`${x.f} Hz × ${x.on.length}`).join(', ')+'.'); }
+  const cap1=await p4Solos('tFixed',[1,2,3]);
+  if(cap1){ const sc=toneScan(cap1,[P4.F.x1,P4.F.x2]); L.push('Track 1 over USB holds: '+sc.map(x=>`${x.f} Hz × ${x.on.length}`).join(', ')+'.'); }
   verdict('tFixed','info',[...L,'The app played each track alone by muting the others (CC 120). Answer what you heard for each, then Run 2.']); return 'Answer the four track questions, then Run 2.';
 }
-async function runFixed2(){
-  const e=p4Need(); if(e) return e; const P=S.diag.p4f; if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
-  const a=i=>S.diag.ans['tFixed:'+i], mid=[0,1,2,3].find(i=>a(i)===2), k=mid!=null?mid+1:3;
-  const err=await p4Multi('tFixed',[P4.F.x4],[1],'Pass 2: a new tone on USB 2 only, nothing touched on the TP-7'); if(err) return err;
-  const fb=await tpFileNow(); await p4Solos('tFixed',[k]);
-  const L=[...(S.diag.extra.tFixed||[]).filter(x=>!/^Pass 2|^Run 2/.test(x)),`Run 2: file before ${fileTxt(P.f1)}, after ${fileTxt(fb)}${sameFile(P.f1,fb)===false?' (a new recording)':''}. The app then played track ${k} alone, the track you heard the mid tone on.`];
-  verdict('tFixed','info',L); return 'Answer the last question.';
-}
-async function runBleIn(){
-  if(!navigator.requestMIDIAccess) return 'This browser has no Web MIDI.';
-  const before=R.midi?[...R.midi.inputs.values()].map(p=>p.name||'?'):[];
-  await midiConnect(); await sleep(600);
-  const ins=[...R.midi.inputs.values()].map(p=>p.name||'?'), outs=[...R.midi.outputs.values()].map(p=>p.name||'?');
-  const tp=ins.filter(x=>/tp.?7/i.test(x)).length, bt=ins.filter(x=>/blue|ble\b/i.test(x)).length, added=ins.filter(x=>!before.includes(x)||ins.filter(y=>y===x).length>before.filter(y=>y===x).length);
-  const ok=tp>=2||bt>0||added.length>0, cur=R.midi.outputs.get(R.midiOutId);
-  const L=[`MIDI inputs now: ${ins.join(', ')||'none'}.`,`MIDI outputs now: ${outs.join(', ')||'none'}.`,`Tinebox sends to: ${cur?cur.name:'nothing'}.`,
-    ok?'A new port appeared, so Bluetooth MIDI reaches this browser. A Bluetooth MIDI footswitch will show up the same way.':'No new port appeared.'];
-  verdict('bleIn',ok?'pass':'warn',L); return ok?'Bluetooth MIDI reaches Tinebox.':'No Bluetooth port seen yet.';
-}
 DIAG.push(
- {id:'tSame',t:'Add a pass to the same recording, app only',how:'Automatic, about 1 minute. Record sources USB 1 only. Run 1 records 4 bars of low bursts as a new recording. Run 2 records higher bursts on the same beats using only remote commands (arm, Start Session, Play), then plays the file back and checks whether pass 2 overdubbed onto it, overwrote it or became a new recording. If it overdubs, nothing ever needs doing on the TP-7.',
-  acts:[['Run 1',runSame1],['Run 2',runSame2]],qs:[]},
- {id:'tPrep',t:'Prepare once by hand, then app only',how:'You and the app, about 3 minutes. Skip if test 11 passed. Once, on the TP-7: go back to the pass 1 recording if Run 2 made a new one (test 11 names it), enter edit mode (hold record, then press stop), keep track 1 selected (+ and −), choose overdub (hold record, press >), and leave it ready the way you would before pressing play yourself. Leave the tape at the start. Then Run 1 and Run 2 without touching the TP-7 in between: the app rewinds, arms, records, disarms and listens each time. This shows whether one preparation lasts.',
-  acts:[['Run 1',()=>runPrep(2)],['Run 2',()=>runPrep(3)]],qs:[['While the passes recorded, did you hear the earlier passes on the TP-7?',['Yes','No']]]},
- {id:'tTrack2',t:'A pass onto a new track 2',how:'You and the app, about 2 minutes. Only if you want one track per pass; test 16 checks a setup that avoids this step. By hand: in edit mode add a track (hold record, press +), select track 2, choose overdub. Run records 4 bars, then plays the file with track 1 muted by the app (CC 120) so you hear track 2. It also checks whether the TP-7\'s file notice counts tracks, so the app could verify them itself.',
-  acts:[['Run',runTrack2]],qs:[['With track 1 muted, what did you hear?',['Bursts, tight on the beat','Bursts, but loose or flamming','Nothing','Everything (the mute did nothing)']],['How many tracks does the TP-7 show for this recording now?',['2','1','3 or more','Not sure']]],
-  av:a=>a(0)==null?null:a(0)===0&&a(1)===0?'pass':a(0)===2?'fail':'warn'},
- {id:'tPunch',t:'Record from a bar marker, app first',how:'Mostly automatic, about 4 minutes. Uses the same recording. Run 1 places a marker on each bar. Runs 2 to 4 try to record 4 bursts into bar 3 with remote commands only: A arms, then holds the bar 3 cue note; B holds the cue note, then arms while it plays; C taps the cue, stops (which rewinds to it), arms and starts by SysEx. Run 5 is the fallback by hand: select cue 3 and arm recording from it (hold record, press <), then Run 5 starts it. Each run plays the file back from bar 1 and checks where the bursts landed. If a run makes a new recording, go back to the test recording before the next run.',
-  acts:[['Run 1',runPunch1],['Run 2 (A)',()=>runPunch('A')],['Run 3 (B)',()=>runPunch('B')],['Run 4 (C)',()=>runPunch('C')],['Run 5 (by hand)',()=>runPunch('D')]],qs:[['During the remote attempts, did the TP-7 record (red light) at any point?',['Yes','No','Not sure']]]},
- {id:'tMonitor',t:'Hear Tinebox while recording only the guitar',how:'About 30 s. Record sources line 1 only, guitar muted. Run records 2 bars on the TP-7 while the app plays bursts over USB, then checks that the recording holds only line 1. This is the lead-line case: Tinebox plays the loop, the TP-7 records just the guitar. Test 16 covers the same case without changing sources.',
-  acts:[['Run',runMonitor]],qs:[['While the TP-7 recorded, did you hear the app\'s bursts on the TP-7?',['Yes','No']]],av:a=>a(0)==null?null:a(0)===0?'pass':'fail'},
- {id:'tFixed',t:'One fixed setup, the app picks the track',how:'You listen, about 3 minutes. Once, by hand: input mode manual, record sources line 1, USB 1, USB 2 and USB 3; guitar muted. Run 1 sends a low tone on USB 1, a mid tone on USB 2 and a high tone on USB 3 and records 2 bars, then plays each track alone by muting the others (CC 120). Answer what you heard per track. Run 2 records a new tone on USB 2 only, without touching the TP-7, and plays that track alone again. If this works, the app chooses the track for every pass simply by sending to a different USB pair, and you never change sources or tracks on the TP-7. Needs 6 output channels.',
-  acts:[['Run 1',runFixed1],['Run 2',runFixed2]],
-  qs:[['Track 1 alone',['Nothing','Low tone','Mid tone','High tone','Several']],['Track 2 alone',['Nothing','Low tone','Mid tone','High tone','Several']],['Track 3 alone',['Nothing','Low tone','Mid tone','High tone','Several']],['Track 4 alone',['Nothing','Low tone','Mid tone','High tone','Several']],['Run 2: the mid-tone track alone',['Mid tone plus the new tone','Only the new tone','Only the mid tone','Nothing']]],
-  av:(a,r)=>{ if(r&&r.s==='fail') return 'fail'; const t=[0,1,2,3].map(a); if(t.some(x=>x==null)) return null; const sep=[1,2,3].every(v=>t.filter(x=>x===v).length===1)&&t.includes(0);
-    if(a(4)==null) return sep?null:'fail'; return sep&&a(4)===0?'pass':sep?'warn':'fail'; }},
- {id:'bleIn',t:'Bluetooth MIDI reaches Tinebox',nomidi:true,how:'You connect, about 2 minutes. A Bluetooth MIDI footswitch only works if MIDIWeb lists Bluetooth MIDI ports. The TP-7 has Bluetooth MIDI, so it can stand in for a pedal. 1. Open GarageBand, then its settings, Advanced, Bluetooth MIDI Devices, and tap the TP-7 (or use Korg\'s free Bluetooth MIDI Connect). 2. Come back to MIDIWeb and tap Run. Tinebox keeps sending to the USB port. Afterwards you can disconnect the Bluetooth link again.',
-  acts:[['Run',runBleIn]],qs:[['Did GarageBand or Bluetooth MIDI Connect show the TP-7 as connected?',['Yes','No','Could not find it']]]}
 );
 /* SysEx map (23 Oct). The TP-7 speaks Teenage Engineering's shared SysEx framework, documented for the EP-133 by
    kmorrill/ep-series-sysex: F0 00 20 76 <product> 40 <flags|id-high> <id-low> <command> <packed7 payload> F7, flags 0x40 =
    request, 0x20 = id present. Responses put a raw status byte before the payload; a nonzero status carries an ASCII reason.
-   Byte 5 = 0x33 marks a firmware debug frame. Known commands: 0x01 GREET, 0x05 FILE (sub-commands INIT 01, GET 03, LIST 04,
-   DELETE 06, METADATA 07, STAT 0b, integers big-endian); on the TP-7 also 0x04 USB mode (MTP) and 0x7F transport. */
+   Byte 5 = 0x33 marks a firmware debug frame. Known commands: 0x01 GREET, 0x02 ECHO, 0x04 USB mode (MTP) and 0x7F transport.
+   The EP-133's 0x05 FILE returns status 2 (unknown) on the TP-7 (24 Oct), so there is no file access over SysEx. */
 function pack7(v){ const o=[]; for(let i=0;i<v.length;i+=7){ const g=v.slice(i,i+7); let m=0; g.forEach((x,j)=>{ if(x&0x80) m|=1<<j; }); o.push(m,...g.map(x=>x&0x7F)); } return o; }
 function sxReq(cmd,payload){ sxId=sxId%4095+1; sxSent[sxId]='cmd '+hx([cmd]); return {id:sxId,bytes:[0xF0,0x00,0x20,0x76,0x19,0x40,0x60|((sxId>>7)&0x1F),sxId&0x7F,cmd,...pack7(payload||[]),0xF7]}; }
 const asc=v=>String.fromCharCode(...v.filter(x=>x>=32&&x<127));
@@ -2992,164 +2903,233 @@ async function sxAsk(cmd,payload,ms){
   return {resp:ps.find(p=>p.kind==='resp'&&p.id===q.id),ms:tr?Math.round(tr-t0):null,events:ps.filter(p=>p.kind==='event'),debug:ps.find(p=>p.debug)};
 }
 async function sxAlive(){ const r=await sxAsk(0x01,[],900); if(!r.resp) return null; const m=/mode:([a-z_]+)/i.exec(asc(r.resp.v)); return m?m[1]:'?'; }
-const h2=c=>'0x'+hx([c]);
-function evTxt(e){ const v=e.v||[]; if(e.cmd===0x7F) return v[0]===0x4B?'K file notice':`${v[0]>=32&&v[0]<127?String.fromCharCode(v[0]):hx([v[0]])} ${v.slice(1,9).join(' ')}`; return `command ${hx([e.cmd])} ${hx(v.slice(0,12))}`; }
-function sxSum(r){ if(r.debug) return {debug:r.debug.text.slice(0,120)}; const ev=r.events.map(evTxt).filter(x=>x!=='K file notice').slice(0,4);
-  if(!r.resp) return {none:1,ev}; const v=r.resp.v, kv=!r.resp.st&&v.length>=2&&v.length<=6&&v[0]>=65&&v[0]<=122;
-  return {st:r.resp.st,why:r.resp.st?asc(v).slice(0,80):'',n:v.length,hex:kv?`${String.fromCharCode(v[0])} = ${v.slice(1).join(' ')}`:hx(v.slice(0,20)),txt:kv?'':asc(v).slice(0,80),ev}; }
-function sxM(){ return S.diag.sxmap||(S.diag.sxmap={cmds:{},ops:{},opv:{}}); }
-function rng(keys){ const n=keys.map(k=>/^0x[0-9a-f]+$/i.test(k)?parseInt(k,16):NaN); if(n.some(isNaN)) return keys.join(', ');
-  const out=[]; for(let i=0;i<n.length;){ let j=i; while(j+1<n.length&&n[j+1]===n[j]+1) j++; out.push(j>i+1?`${keys[i]} to ${keys[j]}`:j===i+1?`${keys[i]}, ${keys[j]}`:keys[i]); i=j+1; } return out.join(', '); }
-function sxGroup(map,label,name){
-  const acc=[], rej={}, none=[], dbg=[];
-  Object.entries(map).forEach(([k,r])=>{ const key=name(k);
-    if(r.debug) dbg.push(`${key}: ${r.debug}`); else if(r.none) none.push(key+(r.ev&&r.ev.length?` (events: ${r.ev.join('; ')})`:'')+(r.fileChanged?' (file changed)':''));
-    else if(r.st){ const w=r.why||'status '+r.st; (rej[w]=rej[w]||[]).push(key); }
-    else acc.push(`${key}: ${r.n?(r.txt.length>3?`"${r.txt}"`:r.hex):'empty reply'}${r.ev&&r.ev.length?`; events ${r.ev.join('; ')}`:''}${r.fileChanged?`; file changed to ${r.file}`:''}${r.after?`; then ${r.after}`:''}`); });
-  const nr=Object.values(rej).reduce((a,b)=>a+b.length,0), L=[`${label}: ${acc.length} accepted, ${nr} rejected, ${none.length} without reply${dbg.length?`, ${dbg.length} debug frames`:''}.`];
-  acc.forEach(x=>L.push('  accepted '+x)); Object.entries(rej).forEach(([w,ks])=>L.push(`  rejected "${w}" (status ${map[Object.keys(map).find(k=>name(k)===ks[0])].st}): ${rng(ks)}`));
-  if(none.length) L.push('  no reply: '+none.join(', ')); dbg.forEach(x=>L.push('  debug frame after '+x)); return L; }
-function sxVerdict(){ const M=sxM(), L=[];
-  if(Object.keys(M.cmds).length) L.push(...sxGroup(M.cmds,'Run 1, commands with no payload (0x04 USB mode and 0x05, 0x7F mapped elsewhere)',k=>h2(+k)));
-  if(Object.keys(M.ops).length) L.push(...sxGroup(M.ops,'Run 2, transport sub-commands (command 0x7F)',k=>h2(+k)));
-  if(Object.keys(M.opv).length) L.push(...sxGroup(M.opv,'Run 3, accepted ones again with a value byte',k=>k));
-  if(M.filesL) L.push('Run 4, files (read only):',...M.filesL.map(x=>'  '+x));
-  if(M.stopped) L.push(M.stopped);
-  verdict('sxMap','info',L); }
-function sxStop(msg){ const M=sxM(); M.stopped=`${msg} Replug or switch the TP-7 off and on, tap Connect MIDI in the TP-7 tab, then tap the same Run again: it continues after this one.`; save(); sxVerdict(); return msg; }
-async function sxPrep(){ const e=tp7Ready(); if(e) return e; initAudio(); if(LP.armed) lpArm(false); mNow([0xB0,14,0]); await sleep(150);
-  if(!await sxAlive()) return 'The TP-7 does not answer the identity request. Reconnect MIDI (TP-7 tab, Connect MIDI) and try again.'; const M=sxM(); M.stopped=null; return ''; }
-const SXSKIP={0x04:1,0x05:1,0x7F:1};
-async function runSxMap1(){
-  const e=await sxPrep(); if(e) return e; const M=sxM();
-  for(let c=M.nextCmd||0;c<0x7F;c++){ if(SXSKIP[c]) continue; setDs('sxMap',`Run 1: command ${h2(c)}, ${c+1} of 127…`);
-    const r=await sxAsk(c,[],400); M.cmds[c]=sxSum(r); M.nextCmd=c+1; save();
-    if(r.debug||!r.resp||!r.resp.st){ const al=await sxAlive(); if(al!=='normal'){ M.cmds[c].after=al?`mode ${al}`:'no answer to greet'; save(); return sxStop(`After command ${h2(c)} the TP-7 ${al?'switched to mode '+al:'stopped answering'}.`); } } }
-  M.nextCmd=0x7F; save(); sxVerdict(); return 'Run 1 done.';
-}
-async function sxSettle(){ mNow([0xB0,14,0]); mNow(sxMsg(SXOP.stop)); await sleep(200); mNow(sxMsg(SXOP.stop)); await sleep(250); return await tpFileNow(); }
-async function sxProbeTransport(M,key,payload){
-  const r=await sxAsk(0x7F,payload,450), s=sxSum(r), f=await sxSettle();
-  s.file=f?f.path.split('/').pop():null; s.fileChanged=!!(f&&M.lastFile&&f.path!==M.lastFile); if(f) M.lastFile=f.path;
-  if(!f){ const al=await sxAlive(); if(al!=='normal') s.after=al?`mode ${al}`:'no answer'; } return s; }
-async function runSxMap2(){
-  const e=await sxPrep(); if(e) return e; const M=sxM(); const f0=await tpFileNow(); M.lastFile=f0&&f0.path;
-  for(let op=M.nextOp||0;op<0x80;op++){ setDs('sxMap',`Run 2: transport sub-command ${h2(op)}, ${op+1} of 128…`);
-    const s=await sxProbeTransport(M,op,[op]); M.ops[op]=s; M.nextOp=op+1; save();
-    if(s.after) return sxStop(`After transport sub-command ${h2(op)} the TP-7 ${/mode/.test(s.after)?'switched to '+s.after:'stopped answering'}.`); }
-  M.nextOp=0x80; save(); sxVerdict(); return 'Run 2 done.';
-}
-async function runSxMap3(){
-  const e=await sxPrep(); if(e) return e; const M=sxM(); if(!Object.keys(M.ops).length&&!Object.keys(M.cmds).length) return 'Run 1 and Run 2 first.';
-  const ops=Object.entries(M.ops).filter(([k,r])=>!r.debug&&!r.none&&(r.st===0||/arg|param|len|size|value|missing|range|payload/i.test(r.why||''))).map(([k])=>+k).filter(k=>![0x40,0x50,0x51].includes(k));
-  const cmds=Object.entries(M.cmds).filter(([k,r])=>!r.debug&&!r.none&&(r.st===0||/arg|param|len|size|value|missing|range|payload/i.test(r.why||''))&&+k!==1).map(([k])=>+k);
-  const jobs=[...ops.flatMap(op=>[0,1,2,127].map(v=>({c:0x7F,p:[op,v],key:`0x7f ${h2(op)} ${v}`}))),...cmds.flatMap(c=>[[0],[1],[0,0]].map(p=>({c,p,key:`${h2(c)} [${p.join(' ')}]`})))];
-  if(!jobs.length){ M.opv={}; save(); sxVerdict(); return 'Nothing was accepted, so there is nothing to try with values.'; }
-  const f0=await tpFileNow(); M.lastFile=f0&&f0.path;
-  for(let i=M.nextV||0;i<jobs.length;i++){ const j=jobs[i]; setDs('sxMap',`Run 3: ${j.key}, ${i+1} of ${jobs.length}…`);
-    let s; if(j.c===0x7F) s=await sxProbeTransport(M,j.key,j.p); else { const r=await sxAsk(j.c,j.p,450); s=sxSum(r); const al=await sxAlive(); if(al!=='normal') s.after=al?`mode ${al}`:'no answer'; }
-    M.opv[j.key]=s; M.nextV=i+1; save(); if(s.after) return sxStop(`After ${j.key} the TP-7 ${/mode/.test(s.after)?'switched to '+s.after:'stopped answering'}.`); }
-  M.nextV=jobs.length; save(); sxVerdict(); return `Run 3 done: ${jobs.length} tries.`;
-}
-const be16=n=>[(n>>8)&255,n&255], be32=n=>[(n>>>24)&255,(n>>>16)&255,(n>>>8)&255,n&255];
-const rd16=(v,i)=>(v[i]<<8)|v[i+1], rd32=(v,i)=>(((v[i]<<24)|(v[i+1]<<16)|(v[i+2]<<8)|v[i+3])>>>0);
-function parseList(v){ const out=[]; let i=2; while(i+7<=v.length){ const fid=rd16(v,i), fl=v[i+2], size=rd32(v,i+3); let j=i+7, name=''; while(j<v.length&&v[j]!==0){ name+=String.fromCharCode(v[j]); j++; } out.push({fid,fl,size,name}); i=j+1; } return out; }
-const rTxt=r=>r.resp?(r.resp.st?`status ${r.resp.st} "${asc(r.resp.v)}"`:r.resp.v.length?`ok, ${hx(r.resp.v.slice(0,16))}${r.resp.v.length>16?' …':''}`:'ok'):'no reply';
-async function fileList(node){ const all=[]; for(let pg=0;pg<40;pg++){ const r=await sxAsk(0x05,[0x04,...be16(pg),...be16(node)],900);
-    if(!r.resp||r.resp.st) return {all,err:pg?null:rTxt(r)}; const es=parseList(r.resp.v); if(!es.length||es.every(e=>all.some(a=>a.fid===e.fid))) break; all.push(...es); } return {all}; }
-function wavHead(b){ if(b.length<12||asc(b.slice(0,4))!=='RIFF'||asc(b.slice(8,12))!=='WAVE') return null; let i=12; const out=[];
-  while(i+8<=b.length&&out.length<10){ const id=String.fromCharCode(...b.slice(i,i+4)).replace(/[^ -~]/g,'?'), n=(b[i+4]|(b[i+5]<<8)|(b[i+6]<<16)|(b[i+7]<<24))>>>0;
-    if(id==='fmt '&&i+24<=b.length){ const fmt=b[i+8]|(b[i+9]<<8), ch=b[i+10]|(b[i+11]<<8), sr=(b[i+12]|(b[i+13]<<8)|(b[i+14]<<16)|(b[i+15]<<24))>>>0, bits=b[i+22]|(b[i+23]<<8);
-      out.push(`fmt: ${fmt===1?'PCM':fmt===3?'float':fmt===0xFFFE?'extensible':fmt}, ${ch} channels, ${sr} Hz, ${bits} bit`); }
-    else out.push(`chunk "${id}" ${n} B${i+8+Math.min(n,64)<=b.length&&n<400?`: ${asc(b.slice(i+8,i+8+Math.min(n,120)))}`:''}`);
-    if(n>1e9) break; i+=8+n+(n&1); } return out.join('; '); }
-async function sxFindCurrent(F){ const root=await fileList(0); F.root=root.all.map(x=>({name:x.name,fid:x.fid,fl:x.fl,size:x.size}));
-  const cur=await tpFileNow(), curName=cur?cur.path.split('/').pop():null, dirs=[]; let target=null;
-  for(const d of root.all.filter(x=>x.fl&0x02).slice(0,8)){ const l=await fileList(d.fid); dirs.push({d,l}); const hit=curName&&l.all.find(x=>x.name===curName); if(hit) target=hit; }
-  return {root,dirs,cur,curName,target}; }
-async function runSxMap4(){
-  const e=await sxPrep(); if(e) return e; const M=sxM(), L=[], F={};
-  const init=await sxAsk(0x05,[0x01,0x00,...be32(0x00400000)],900); L.push(`FILE INIT (read): ${rTxt(init)}.`);
-  if(!init.resp||init.resp.st){ M.filesL=L; save(); sxVerdict(); return 'The TP-7 does not open the file protocol.'; }
-  const fc=await sxFindCurrent(F); L.push(`Root: ${fc.root.all.length} entries${fc.root.err?` (${fc.root.err})`:''}: ${fc.root.all.slice(0,16).map(x=>`${x.name} [fid ${x.fid}, flags ${hx([x.fl])}, ${x.size} B]`).join('; ')||'none'}.`);
-  fc.dirs.forEach(({d,l})=>L.push(`${d.name} (fid ${d.fid}): ${l.all.length} entries${l.err?` (${l.err})`:''}; newest: ${l.all.slice(-3).map(x=>`${x.name} [fid ${x.fid}, flags ${hx([x.fl])}, ${x.size} B]`).join('; ')||'none'}.`));
-  const t=fc.target;
-  if(!t) L.push(`The loaded recording (${fc.curName||'unknown'}) was not found in the listings.`);
-  else { L.push(`Loaded recording ${fc.curName}: fid ${t.fid}, ${t.size} B.`);
-    L.push(`STAT: ${rTxt(await sxAsk(0x05,[0x0b,...be16(t.fid)],900))}.`);
-    let js=''; for(let pg=0;pg<12;pg++){ const m=await sxAsk(0x05,[0x07,0x02,...be16(t.fid),...be16(pg)],900); if(!m.resp||m.resp.st){ if(!pg) L.push(`METADATA: ${rTxt(m)}.`); break; }
-      const body=m.resp.v.slice(2); js+=asc(body); if(!body.length||body[body.length-1]===0) break; }
-    if(js){ F.meta=js.slice(0,6000); L.push(`METADATA (${js.length} characters): ${js.slice(0,2000)}`); }
-    const go=await sxAsk(0x05,[0x03,0x00,...be16(t.fid),...be32(0)],1200); L.push(`GET open: ${rTxt(go)}.`);
-    if(go.resp&&!go.resp.st){ const size=rd32(go.resp.v,3), t0=performance.now(), gd=await sxAsk(0x05,[0x03,0x01,...be16(0)],2000), dt=performance.now()-t0;
-      if(gd.resp&&!gd.resp.st){ const data=gd.resp.v.slice(2); L.push(`GET page 0: ${data.length} of ${size} bytes in ${Math.round(dt)} ms, about ${Math.round(data.length/Math.max(1,dt))} kB/s.`); const w=wavHead(data); L.push(w?`WAV header: ${w}.`:`First bytes: ${hx(data.slice(0,24))}.`); }
-      else L.push(`GET page 0: ${rTxt(gd)}.`); } }
-  const m0=await sxAsk(0x05,[0x07,0x02,...be16(0),...be16(0)],900); L.push(`Root metadata: ${m0.resp&&!m0.resp.st?asc(m0.resp.v.slice(2)).slice(0,800):rTxt(m0)}.`);
-  await sxAsk(0x05,[0x01,0x00,...be32(0x00400000)],600);
-  M.files=F; M.filesL=L; save(); sxVerdict(); return t?'Run 4 done: files listed and the loaded recording read.':'Run 4 done.';
-}
-const tb=t=>[...t].map(c=>c.charCodeAt(0)&0xFF);
-async function sxMetaGet(fid){ let js=''; for(let pg=0;pg<16;pg++){ const m=await sxAsk(0x05,[0x07,0x02,...be16(fid),...be16(pg)],900);
-    if(!m.resp||m.resp.st) return {js,err:pg?null:rTxt(m)}; const body=m.resp.v.slice(2), end=body.indexOf(0); js+=String.fromCharCode(...(end>=0?body.slice(0,end):body)); if(!body.length||end>=0) break; } return {js}; }
-async function sxWriteStart(L){ const init=await sxAsk(0x05,[0x01,0x01,...be32(0x00400000)],900); L.push(`FILE INIT (write): ${rTxt(init)}.`); return init.resp&&!init.resp.st; }
-async function runSxWrite1(){
-  const e=await sxPrep(); if(e) return e; const L=[], F={};
-  if(!await sxWriteStart(L)){ verdict('sxWrite','info',L); return 'The file protocol did not open for writing.'; }
-  const fc=await sxFindCurrent(F), t=fc.target; if(!t){ L.push(`The loaded recording (${fc.curName||'unknown'}) was not found.`); verdict('sxWrite','info',L); return 'Recording not found.'; }
-  const g=await sxMetaGet(t.fid); if(!g.js){ L.push(`Reading its metadata: ${g.err||'empty'}.`); verdict('sxWrite','info',L); return 'No metadata to write back.'; }
-  L.push(`Metadata of ${fc.curName}: ${g.js.length} characters.`);
-  const w=await sxAsk(0x05,[0x07,0x01,...be16(t.fid),...tb(g.js),0],2000); L.push(`Writing it back unchanged: ${rTxt(w)}.`);
-  const g2=await sxMetaGet(t.fid); const same=g2.js===g.js; L.push(same?'Read back: identical.':`Read back: different (${g2.js.length} characters): ${g2.js.slice(0,400)}`);
-  S.diag.sxw={fid:t.fid,name:fc.curName,js:g.js}; save(); await sxAsk(0x05,[0x01,0x00,...be32(0x00400000)],600);
-  const ok=w.resp&&!w.resp.st&&same; verdict('sxWrite',ok?'pass':'info',[...L,ok?'The app can write recording metadata. Run 2 tries adding a cue through it.':'Writing metadata did not work cleanly.']);
-  return ok?'Metadata write works.':'Metadata write did not work.';
-}
+function evTxt(e){ const v=e.v||[]; if(e.cmd===0x7F){ if(v[0]===0x4B) return 'K file notice'; if(v[0]===0x4D) return `position ${((v[1]|(v[2]<<8)|(v[3]<<16)|(v[4]<<24))>>>0)} ms`; if(v[0]===0x4F) return `armed = ${v[1]}`; if(v[0]===0x4E) return `playing = ${v[1]}`;
+    return `${v[0]>=32&&v[0]<127?String.fromCharCode(v[0]):hx([v[0]])} ${v.slice(1,9).join(' ')}`; } return `command ${hx([e.cmd])} ${hx(v.slice(0,12))}`; }
 // add one cue to a cue-like list in the metadata, keeping the list's own format
-function sxCueEdit(js){ let o; try{ o=JSON.parse(js); }catch(x){ return null; } let path=null;
-  const walk=(x,p)=>{ if(path||!x||typeof x!=='object') return; for(const k of Object.keys(x)){ if(/cue/i.test(k)&&Array.isArray(x[k])){ path=[...p,k]; return; } walk(x[k],[...p,k]); } }; walk(o,[]);
-  if(!path) return null; let ref=o; path.slice(0,-1).forEach(k=>ref=ref[k]); const arr=ref[path[path.length-1]];
-  const nums=arr.length&&arr.every(v=>typeof v==='number'), objs=arr.length&&arr.every(v=>v&&typeof v==='object');
-  if(nums){ const a=arr[0], b=arr.length>1?arr[1]:a*2+1; arr.splice(1,0,(a+b)/2); }
-  else if(objs){ const c=JSON.parse(JSON.stringify(arr[arr.length-1])), k=Object.keys(c).find(k=>typeof c[k]==='number'&&/pos|time|frame|sample|offset|start/i.test(k)); if(!k) return null; c[k]=Math.round(c[k]*1.1+1); arr.push(c); }
-  else if(!arr.length) return null; else return null;
-  return {js:JSON.stringify(o),path:path.join('.'),n:arr.length}; }
-async function runSxWrite2(){
-  const e=await sxPrep(); if(e) return e; const W=S.diag.sxw; if(!W) return 'Run 1 first.'; const L=[];
-  const ed=sxCueEdit(W.js); if(!ed){ verdict('sxWrite','info',[...(S.diag.extra.sxWrite||[]),'Run 2: the metadata holds no cue list the app could extend, so cues cannot be written this way (as far as this test can tell).']); return 'No cue list in the metadata.'; }
-  if(!await sxWriteStart(L)) return 'The file protocol did not open for writing.';
-  const w=await sxAsk(0x05,[0x07,0x01,...be16(W.fid),...tb(ed.js),0],2000), g=await sxMetaGet(W.fid);
-  L.push(`Run 2: added one entry to "${ed.path}" (now ${ed.n}) and wrote it: ${rTxt(w)}. Read back ${g.js===ed.js?'matches':'differs'}.`);
-  await sxAsk(0x05,[0x01,0x00,...be32(0x00400000)],600);
-  verdict('sxWrite','info',[...(S.diag.extra.sxWrite||[]).filter(x=>!/^Run 2/.test(x)),...L,'Now check the TP-7 (reload the recording if needed): does it show one more cue? Your answer decides whether the app can place markers without a marker pass.']);
-  return 'Written: check the TP-7 for an extra cue.';
+// 24 Oct map: transport sub-commands the TP-7 accepts besides session (0x40), play (0x50) and stop (0x51).
+// One of the early ones entered edit mode, later ones started reel calibration, values showed OK or FAIL.
+const SXSTEP=[['Read state','read'],['0x02','op',[0x02]],['0x03','op',[0x03]],['0x03 + 0','op',[0x03,0]],['0x03 + 1','op',[0x03,1]],['0x04','op',[0x04]],
+  ['0x3d','op',[0x3d]],['0x3d + 0','op',[0x3d,0]],['0x3d + 1','op',[0x3d,1]],['0x3e','op',[0x3e]],['0x41','op',[0x41]],['0x4a','pos',[0x4a]],['0x55','op',[0x55]],['0x02 + 1','op',[0x02,1]]];
+async function sxState(){ R.tpFile=null; const pos=await tpPosNow(); await sleep(50); return {file:R.tpFile,pos}; }
+const stTxt=st=>`${st.file?st.file.path.split('/').pop()+` (${(st.file.frames/Math.max(1,st.file.sr)).toFixed(2)} s)`:'file unknown'}, position ${st.pos} ms`;
+async function sxReadBC(){ const b=await sxAsk(0x7F,[0x0b],500), c=await sxAsk(0x7F,[0x0c],500); return `0x0b → ${b.resp?hx(b.resp.v):'none'}, 0x0c → ${c.resp?hx(c.resp.v):'none'}`; }
+async function sxStepRun(i){
+  const e=tp7Ready(); if(e) return e; const [label,kind,payload]=SXSTEP[i], SS=S.diag.sxs||(S.diag.sxs={});
+  setDs('sxStep',kind==='read'?'Reading the state…':`${label}: reading the state, then sending…`);
+  let b0=await sxState(), sb=`${stTxt(b0)}; ${await sxReadBC()}`;
+  if(kind==='read'){ const rd=SS.reads||(SS.reads=[]); rd.push(sb); if(rd.length>8) rd.shift(); }
+  else { let mid='';
+    // 0x4a sent 'position 0' in the map: move the tape first (disarmed), so a jump back is visible
+    if(kind==='pos'&&b0.pos<500){ mNow([0xB0,14,0]); mNow(sxMsg(SXOP.session)); mNow(sxMsg(SXOP.play)); await sleep(2000); mNow(sxMsg(SXOP.stop)); await sleep(400);
+      b0=await sxState(); sb=`${stTxt(b0)}; ${await sxReadBC()}`; mid=' Played 2 s first.'; }
+    const r=await sxAsk(0x7F,payload,1500); await sleep(1200);
+    const b1=await sxState(), sa=`${stTxt(b1)}; ${await sxReadBC()}`;
+    const rep=` Reply: ${r.resp?(r.resp.st?`status ${r.resp.st}${r.resp.reason?` "${r.resp.reason}"`:''}`:`ok${r.resp.v.length?' '+hx(r.resp.v):''}`):'none'}${r.events.length?`; notices: ${r.events.map(evTxt).join('; ')}`:''}.`;
+    SS[i]=`${label}:${mid}${rep} Before: ${sb}. After: ${sa===sb?'unchanged':sa}.`; }
+  save(); verdict('sxStep','info',[...(SS.reads||[]).map((x,j)=>`Read state ${j+1}: ${x}`),...SXSTEP.map((x,j)=>j?SS[j]:null).filter(Boolean)]);
+  return kind==='read'?`Read ${SS.reads.length}: ${sb}. Write in the notes what you had set.`:'Sent: say what the TP-7 did.';
 }
-async function runSxDel(){
-  if(S.diag.ans['sxDel:0']!==0) return 'Answer the question first: allow deleting the loaded recording.';
-  const e=await sxPrep(); if(e) return e; const L=[], F={};
-  const init=await sxAsk(0x05,[0x01,0x01,...be32(0x00400000)],900); L.push(`FILE INIT (write): ${rTxt(init)}.`);
-  if(!init.resp||init.resp.st){ verdict('sxDel','info',L); return 'The file protocol did not open for writing.'; }
-  const fc=await sxFindCurrent(F), t=fc.target; if(!t){ L.push(`The loaded recording (${fc.curName||'unknown'}) was not found.`); verdict('sxDel','info',L); return 'Recording not found.'; }
-  const dir=fc.dirs.find(x=>x.l.all.some(y=>y.fid===t.fid)), del=await sxAsk(0x05,[0x06,...be16(t.fid)],2500); L.push(`DELETE ${fc.curName} (fid ${t.fid}): ${rTxt(del)}${del.events.length?`; events ${del.events.map(evTxt).join('; ')}`:''}.`);
-  const after=dir?await fileList(dir.d.fid):{all:[]}, gone=dir&&!after.all.some(y=>y.fid===t.fid), now=await tpFileNow();
-  L.push(gone?'The recording is gone from the listing.':'The recording is still listed.',`Loaded now: ${fileTxt(now)}.`);
-  await sxAsk(0x05,[0x01,0x00,...be32(0x00400000)],600);
-  verdict('sxDel',gone?'pass':'info',L); return gone?'Deleted by SysEx: the app can remove recordings.':'Not deleted.';
+const SXOPTS=['Nothing visible','Edit mode on','Edit mode off','Tape went to the start','Reel calibration','Showed OK','Showed FAIL','Something else (note it)'];
+DIAG.push(
+ {id:'sxStep',t:'The new SysEx sub-commands, one at a time',how:'You watch, about 8 minutes, TP-7 stopped with a test recording loaded. The map found sub-commands the TP-7 accepts besides start session, play and stop; one of them entered edit mode, others started reel calibration or showed OK or FAIL. Tap one button at a time, watch the TP-7 screen and answer what it did. Each button also reads the loaded file, the tape position and two values the TP-7 reports (0x0b and 0x0c). If edit mode turns on, note it and leave it on for the next button: that shows what the others do in edit mode. Tap Read state in different situations (edit mode on and off, overdub and overwrite, another track selected, armed) and write in the notes what you had set each time: if 0x0b or 0x0c follows one of them, the app can read that setting. 0x4a first plays 2 s, then checks whether the tape goes back to the start; if it does, the app can rewind in edit mode. 0x02 + 1 comes last because it got no reply in the map. If the TP-7 stops answering, switch it off and on.',
+  acts:SXSTEP.map((x,i)=>[x[0],()=>sxStepRun(i)]),qs:SXSTEP.slice(1).map(x=>[`After ${x[0]}`,SXOPTS])},
+);
+/* build 45 */
+/* Part 3 (build 45): look for remote control of edit mode and of overdub/overwrite.
+   One sub-command entered edit mode during the 24 Oct map, so sequences of the accepted sub-commands may reach other hand-only
+   settings too. Every try ends in a short pass; the file notice and one playback tell what the pass did. */
+const SEQ_E=[
+ ['arm, stop, disarm (like holding record and pressing stop)',['arm',0x51,'disarm']],
+ ['arm, stop, stop, disarm',['arm',0x51,0x51,'disarm']],
+ ['0x03 + 1, stop, 0x03 + 0',[[0x03,1],0x51,[0x03,0]]],
+ ['0x3d + 1, stop, 0x3d + 0',[[0x3d,1],0x51,[0x3d,0]]],
+ ['0x02',[0x02]],['0x03',[0x03]],['0x04',[0x04]],['0x03 + 1',[[0x03,1]]],['0x03 + 0',[[0x03,0]]],
+ ['0x3d',[0x3d]],['0x3d + 1',[[0x3d,1]]],['0x3d + 0',[[0x3d,0]]],['0x41',[0x41]],['0x55',[0x55]],
+ ['arm, 0x02, disarm',['arm',0x02,'disarm']],['arm, 0x03, disarm',['arm',0x03,'disarm']],['arm, 0x04, disarm',['arm',0x04,'disarm']],
+ ['arm, 0x3d, disarm',['arm',0x3d,'disarm']],['arm, 0x55, disarm',['arm',0x55,'disarm']],['arm, 0x4a, disarm',['arm',0x4a,'disarm']],
+ ['Start Session, 0x41',[0x40,0x41]]];
+// by hand, overdub or overwrite is "hold record, press >": try every accepted sub-command alone, while armed, and between 0x03/0x3d + 1 and + 0
+const SEQ_O=[
+ ['nothing (edit mode as it is set now)',[]],
+ ['0x02',[0x02]],['0x03',[0x03]],['0x03 + 1',[[0x03,1]]],['0x03 + 0',[[0x03,0]]],['0x04',[0x04]],
+ ['0x3d',[0x3d]],['0x3d + 1',[[0x3d,1]]],['0x3d + 0',[[0x3d,0]]],['0x41',[0x41]],['0x55',[0x55]],
+ ['arm, 0x02, disarm',['arm',0x02,'disarm']],['arm, 0x03, disarm',['arm',0x03,'disarm']],['arm, 0x04, disarm',['arm',0x04,'disarm']],
+ ['arm, 0x3d, disarm',['arm',0x3d,'disarm']],['arm, 0x55, disarm',['arm',0x55,'disarm']],['arm, 0x41, disarm',['arm',0x41,'disarm']],['arm, 0x4a, disarm',['arm',0x4a,'disarm']],
+ ['0x03 + 1, 0x55, 0x03 + 0',[[0x03,1],0x55,[0x03,0]]],['0x03 + 1, 0x02, 0x03 + 0',[[0x03,1],0x02,[0x03,0]]],['0x03 + 1, 0x04, 0x03 + 0',[[0x03,1],0x04,[0x03,0]]],['0x03 + 1, play, 0x03 + 0',[[0x03,1],0x50,[0x03,0]]],
+ ['0x3d + 1, 0x55, 0x3d + 0',[[0x3d,1],0x55,[0x3d,0]]],['0x3d + 1, 0x02, 0x3d + 0',[[0x3d,1],0x02,[0x3d,0]]],['0x3d + 1, 0x04, 0x3d + 0',[[0x3d,1],0x04,[0x3d,0]]],['0x3d + 1, play, 0x3d + 0',[[0x3d,1],0x50,[0x3d,0]]],
+ ['nothing again (the final state)',[]]];
+async function seqSend(steps){
+  for(const s of steps){ if(s==='arm') mNow([0xB0,14,127]); else if(s==='disarm') mNow([0xB0,14,0]); else mNow(sxReq(0x7F,Array.isArray(s)?s:[s]).bytes); await sleep(200); }
+  if(steps.includes(0x50)){ mNow(sxMsg(SXOP.stop)); await sleep(300); } }
+// what tests 6 to 8 found, for "Prepare from the app"
+function seqFound(){
+  const Z=S.diag.seqE, P=S.diag.seqO, ans=S.diag.ans||{}; let edit=null, over=null;
+  if(Z&&Z.found!=null) edit={label:SEQ_E[Z.found][0],steps:SEQ_E[Z.found][1],src:'test 7'};
+  if(!edit){ const j=SXSTEP.findIndex((x,i)=>i>0&&ans['sxStep:'+(i-1)]===1); if(j>0) edit={label:SXSTEP[j][0],steps:[SXSTEP[j][2].length>1?SXSTEP[j][2]:SXSTEP[j][2][0]],src:'test 6'}; }
+  if(P&&P.toOver!=null) over={label:SEQ_O[P.toOver][0],steps:SEQ_O[P.toOver][1]};
+  return {edit,over,baseOver:!!(P&&P.baseKind==='overdub')};
+}
+async function runRemotePrep(id){
+  const e=tp7Ready(); if(e) return e; const f=seqFound();
+  if(!f.edit) return 'No way into edit mode from the app found yet (tests 6 and 7). Prepare the TP-7 by hand.';
+  mNow([0xB0,14,0]); await seqSend(f.edit.steps); await sleep(400); if(f.over){ await seqSend(f.over.steps); await sleep(400); }
+  const line=`Prepared from the app: edit mode by ${f.edit.label} (${f.edit.src})${f.over?`, then overdub by ${f.over.label} (test 8)`:f.baseOver?'; test 8 found overdub already set':'; overdub could not be set from the app'}.`;
+  dgExtra(id,[...((S.diag.extra||{})[id]||[]).filter(x=>!/^Prepared from the app/.test(x)),line]);
+  return `Sent. Check that the TP-7 shows edit mode${f.over||f.baseOver?' with overdub':''}; fix by hand what is missing, then go on.`;
+}
+
+// test 7: which sequence makes the next pass go into the loaded recording (edit mode)?
+const seqE=()=>S.diag.seqE||(S.diag.seqE={next:0,res:{},found:null});
+function seqEVerdict(){
+  const Z=seqE(), done=SEQ_E.map((x,i)=>[x[0],Z.res[i]]).filter(x=>x[1]); if(!done.length) return;
+  const L=[], nw=done.filter(x=>x[1].o==='new').map(x=>x[0]);
+  if(nw.length) L.push(`A new recording as usual after: ${nw.join('; ')}.`);
+  done.filter(x=>x[1].o!=='new').forEach(([l,r])=>L.push(`${l}: ${r.o==='same'?`the pass went into the loaded recording${r.heard===true?' and was heard there':r.heard===false?', but it was not heard in it':''}`:r.o==='dead'?`the TP-7 then ${r.al?'reported mode '+r.al:'stopped answering'}`:'no file notice came back'}.`));
+  const f=Z.found!=null?SEQ_E[Z.found][0]:null;
+  L.push(f?`Edit mode from the app: ${f}. Tests 8 to 11 use it for "Prepare from the app".`:Z.next>=SEQ_E.length?'No sequence made the next pass go into the loaded recording.':`${Z.next} of ${SEQ_E.length} sequences tried so far.`);
+  verdict('seqEdit',f?'pass':'info',L);
+}
+async function runSeqEdit(){
+  const e=p4Need(); if(e) return e; const Z=seqE(); if(Z.next>=SEQ_E.length) return 'All sequences tried. Tap Start over to repeat them.';
+  for(let i=Z.next;i<SEQ_E.length;i++){
+    const [label,steps]=SEQ_E[i], f=i%2?P4.F.p3:P4.F.p2, tag=`${i+1} of ${SEQ_E.length}: ${label}`;
+    setDs('seqEdit',`${tag}…`);
+    if(!(await tpEnsureStart('seqEdit'))){ seqEVerdict(); return `The tape did not go back to the start before "${label}". Leave edit mode by hand, then Run to go on.`; }
+    const f0=(await sxState()).file; await seqSend(steps); await sleep(400);
+    await p4Pass('seqEdit',f,`${tag}, then a pass`,{rewind:false,beats:4});
+    const f1=await tpFileNow(), al=await sxAlive();
+    const r={o:al!=='normal'?'dead':!f0||!f1?'unknown':f1.path!==f0.path?'new':'same',al}; Z.res[i]=r; Z.next=i+1; save();
+    if(r.o==='same'){ const c=await p4Check('seqEdit',[Z.lastF||P4.F.p1,f],{beats:4}); r.heard=c?c[1].n>=2:null; if(r.heard!==false&&Z.found==null) Z.found=i; save(); seqEVerdict();
+      return `"${label}": the pass went into the loaded recording, not a new one. Answer the question, leave edit mode by hand if the TP-7 shows it, then Run to go on.`; }
+    if(r.o!=='new'){ seqEVerdict(); return r.o==='dead'?`After "${label}" the TP-7 stopped answering normally. Switch it off and on, then Run to go on.`:`After "${label}" no file notice came back. Check the TP-7, then Run to go on.`; }
+    Z.lastF=f;
+  }
+  seqEVerdict(); return Z.found!=null?'Done: a sequence enters edit mode.':'Done: no sequence entered edit mode.';
+}
+function runSeqEditReset(){ S.diag.seqE=null; if(S.diag.res) delete S.diag.res.seqEdit; dgExtra('seqEdit',[]); return 'Cleared. Run starts again from the first sequence.'; }
+
+// test 8: in edit mode, which sequence switches between overdub and overwrite? Passes go one after another along a long base,
+// so they never overlap and need no rewinding; one playback at the end shows for each pass whether the base survived under it.
+const seqO=()=>S.diag.seqO;
+async function tpSeek(t,id){ let p=await tpPosNow(); if(p>=t-150) return p; setDs(id,`Moving the tape on to ${(t/1000).toFixed(1)} s…`);
+  mNow([0xB0,14,0]); mNow(sxMsg(SXOP.play)); await waitFor(()=>R.tpPos!=null&&R.tpPos>=t-150,(t-p)+2500,20); mNow(sxMsg(SXOP.stop)); await sleep(400); return await tpPosNow(); }
+const SOK={overdub:'overdub (the base is still there under the pass)',overwrite:'overwrite (the pass replaced the base)',off:'the pass is not on track 1 and the base is intact (another track, or nothing recorded)',erased:'the base is gone and the pass is not on track 1',unclear:'unclear',short:'too short to judge'};
+function seqOLines(){
+  const P=seqO(); if(!P) return []; const L=[`Base recording ${fileTxt(P.base)}, ${Math.round(P.baseLen)} s.`];
+  P.segs.slice().sort((a,b)=>a.i-b.i).forEach(s=>L.push(`${SEQ_O[s.i][0]}: pass at ${(s.from/1000).toFixed(1)} to ${(s.to/1000).toFixed(1)} s${s.newFile?', but in a new recording (edit mode was left)':''}.${s.moved}${s.kind?` Result: ${SOK[s.kind]}${s.changed?', changed by this sequence':''}.`:''}`));
+  if(P.seekFail) L.push(`Moving the tape on by playing failed ${P.seekFail} time${P.seekFail>1?'s':''}, so some passes may sit closer together than planned.`);
+  return L;
+}
+async function runSeqBase(){
+  const e=p4Need(); if(e) return e; const beat=60/S.bpm, per=4*beat+0.9, N=Math.ceil((3+SEQ_O.length*per+3)/beat);
+  setDs('seqOver',`Recording the base: ${N} beats of low bursts, about ${Math.round(N*beat)} s…`);
+  await p4Pass('seqOver',P4.F.p1,`Base recording, ${N} beats`,{beats:N});
+  const fb=await tpFileNow(); if(!fb) return 'No file notice came back. Check the TP-7 and Run 1 again.';
+  S.diag.seqO={bpm:S.bpm,base:fb,baseLen:N*beat,next:0,segs:[],nextFree:3,seekFail:0}; save(); dgExtra('seqOver',seqOLines());
+  if(S.diag.res) delete S.diag.res.seqOver;
+  const sf=seqFound();
+  if(sf.edit){ await seqSend(sf.edit.steps); await sleep(400); return `Base recorded. Edit mode sent from the app (${sf.edit.label}). Check that the TP-7 shows edit mode, or enter it by hand, then Run 2.`; }
+  return 'Base recorded. On the TP-7: enter edit mode (hold record, press stop) and keep track 1. Leave overdub or overwrite as it is. Then Run 2.';
+}
+async function runSeqOver(){
+  const e=p4Need(); if(e) return e; const P=seqO(); if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
+  const beat=60/S.bpm; if(P.next>=SEQ_O.length) return 'All sequences tried. Now Run 3.';
+  for(let i=P.next;i<SEQ_O.length;i++){
+    const [label,steps]=SEQ_O[i], f=i%2?P4.F.p3:P4.F.p2, tag=`${i+1} of ${SEQ_O.length}: ${label}`;
+    setDs('seqOver',`${tag}…`);
+    const s0=await sxState();
+    if(!s0.file||s0.file.path!==P.base.path) return `The TP-7 has ${fileTxt(s0.file)} loaded, not the base ${fileTxt(P.base)}. Load the base, enter edit mode, then Run 2 to go on.`;
+    if(P.nextFree+4*beat+1>P.baseLen){ P.next=SEQ_O.length; save(); return 'The base is full. Now Run 3.'; }
+    const p0=await tpSeek(P.nextFree*1000,'seqOver'); if(p0<P.nextFree*1000-300) P.seekFail++;
+    setDs('seqOver',`${tag}…`); await seqSend(steps); await sleep(400);
+    let p1=await tpPosNow(), moved='';
+    if(p1<p0-500){ moved=` The sequence moved the tape back to ${(p1/1000).toFixed(1)} s.`; p1=await tpSeek(P.nextFree*1000,'seqOver'); }
+    else if(p1>p0+500) moved=` The sequence moved the tape on to ${(p1/1000).toFixed(1)} s.`;
+    await p4Pass('seqOver',f,`${tag}, then a pass`,{rewind:false,beats:4});
+    const s2=await sxState(), al=await sxAlive(), seg={i,f,from:p1,to:s2.pos,moved,newFile:!!(s2.file&&s2.file.path!==P.base.path)};
+    P.segs=P.segs.filter(x=>x.i!==i).concat([seg]); P.next=i+1; if(!seg.newFile) P.nextFree=Math.max(P.nextFree,s2.pos/1000+0.6); save(); dgExtra('seqOver',seqOLines());
+    if(seg.newFile) return `"${label}": the pass made a new recording, so this sequence left edit mode. Load the base ${fileTxt(P.base)} again, enter edit mode, then Run 2 to go on.`;
+    if(al!=='normal') return `After "${label}" the TP-7 ${al?'reported mode '+al:'stopped answering'}. Switch it off and on, load the base, enter edit mode, then Run 2.`;
+  }
+  return 'All sequences tried. Now Run 3: the app plays the base back and works out what each pass did.';
+}
+async function runSeqListen(){
+  const e=p4Need(); if(e) return e; const P=seqO(); if(!P||!P.segs.length) return 'Run 2 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
+  const beat=60/S.bpm, st=await sxState();
+  if(!st.file||st.file.path!==P.base.path) return `Load the base ${fileTxt(P.base)} on the TP-7 first.`;
+  const segs=P.segs.filter(s=>!s.newFile).sort((a,b)=>a.i-b.i), end=Math.min(P.baseLen,Math.max(5,...segs.map(s=>s.to/1000))+1.5);
+  const cap=await p4Listen('seqOver',end,{say:`Playing the first ${Math.round(end)} s of the base and listening…`});
+  if(!cap) return 'No audio input: allow the microphone, then Run 3 again.';
+  const sc=toneScan(cap,[P4.F.p1,P4.F.p2,P4.F.p3]), base=sc[0].on, on=f=>sc.find(x=>x.f===f).on;
+  if(base.length<4){ verdict('seqOver','fail',[...seqOLines(),'The app heard almost none of the base.',SRC_HINT()]); return 'The base was not heard.'; }
+  // file time → capture time: base bursts sit on the beat grid from 0 s in the file; playback reaches the capture about 0.3 s after Play
+  let off=base[0]-Math.max(0,Math.round((base[0]-0.3)/beat))*beat; const res=base.map(t=>{ const x=t-off; return x-Math.round(x/beat)*beat; }).sort((a,b)=>a-b); off+=res[res.length>>1];
+  const cnt=(arr,a,b)=>arr.filter(t=>t>=a&&t<=b).length;
+  let prev=null;
+  segs.forEach(s=>{ const a=s.from/1000+off, b=s.to/1000+off, ia=a+0.15, ib=b-0.15, exp=Math.max(0,Math.floor((ib-off)/beat)-Math.ceil((ia-off)/beat)+1);
+    const own=cnt(on(s.f),a-0.15,b+0.15), bk=cnt(base,ia,ib);
+    s.kind=exp<2?'short':own>=2?(bk>=Math.max(1,exp*0.5)?'overdub':bk<=exp*0.25?'overwrite':'unclear'):(bk>=exp*0.5?'off':bk<=exp*0.25?'erased':'unclear');
+    s.changed=false; if(s.kind==='overdub'||s.kind==='overwrite'){ if(prev&&prev.kind!==s.kind) s.changed=true; prev=s; } });
+  const dec=segs.filter(s=>s.kind==='overdub'||s.kind==='overwrite'), first=segs[0];
+  P.baseKind=first&&first.i===0?first.kind:null; P.toOver=null; P.toOverwrite=null;
+  dec.forEach(s=>{ if(s.changed&&s.kind==='overdub'&&P.toOver==null) P.toOver=s.i; if(s.changed&&s.kind==='overwrite'&&P.toOverwrite==null) P.toOverwrite=s.i; }); save();
+  const ch=dec.filter(s=>s.changed), offT=segs.filter(s=>s.kind==='off'||s.kind==='erased'), L=seqOLines();
+  if(P.baseKind) L.push(`As set at the start, edit mode records in ${P.baseKind}.`);
+  L.push(ch.length?`Switched from the app: ${ch.map(s=>`${SEQ_O[s.i][0]} (to ${s.kind})`).join('; ')}.`:'No sequence switched between overdub and overwrite.');
+  if(offT.length) L.push(`Passes missing from track 1 after: ${offT.map(s=>SEQ_O[s.i][0]).join('; ')}. One of these may have selected another track; check how many tracks the TP-7 shows.`);
+  const ok=P.toOver!=null||(P.baseKind==='overdub'&&P.toOverwrite!=null);
+  verdict('seqOver',ok?'pass':'info',L);
+  return ok?'Found a way to switch overdub from the app.':ch.length?'The mode changed, see below.':'No sequence switched the mode.';
+}
+
+// test 9: the everyday case, a pass at a time into one file
+async function runPrepBase(){
+  const e=p4Need(); if(e) return e;
+  await p4Pass('tPrep',P4.F.p1,'Base: 16 low bursts'); const f1=await tpFileNow();
+  S.diag.p4={f1,bpm:S.bpm,l1:`Base recording ${fileTxt(f1)}.`}; save(); dgExtra('tPrep',[S.diag.p4.l1]); if(S.diag.res) delete S.diag.res.tPrep;
+  return 'Base recorded. Now prepare the TP-7: edit mode, track 1, overdub, by hand or with Prepare from the app. Then Pass A.';
+}
+async function runPrep(ix){
+  const e=p4Need(); if(e) return e; const P=S.diag.p4; if(!P) return 'Run Base first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
+  const f=ix===2?P4.F.p3:P4.F.p4, tag=ix===2?'Pass A':'Pass B';
+  await p4Pass('tPrep',f,`${tag}, ${ix===2?'after the preparation':'nothing touched since'}`); const fa=R.passFile0, fb=await tpFileNow();
+  const fr=ix===2?[P4.F.p1,P4.F.p3]:[P4.F.p1,P4.F.p3,P4.F.p4], r=await p4Check('tPrep',fr), oc=p4Outcome(r,sameFile(fa,fb),fr.length-1);
+  P['prep'+ix]=oc.kind; P['prepL'+ix]=[`${tag} ${oc.txt}. File before: ${fileTxt(fa)}, after: ${fileTxt(fb)}.`,...(oc.kind==='overdub'&&p4Align(r,fr.length-1)?[p4Align(r,fr.length-1).replace('pass 1','the base')]:[])]; save();
+  const L=[P.l1,...(((S.diag.extra||{}).tPrep||[]).filter(x=>/^Prepared from the app/.test(x))),...(P.prepL2||[]),...(ix===3?P.prepL3||[]:[])];
+  if(ix===2){ dgExtra('tPrep',L); return `${tag} ${oc.txt}. Now Pass B, without touching the TP-7.`; }
+  const a2=P.prep2==='overdub', a3=P.prep3==='overdub', s=a2&&a3?'pass':a2||a3?'warn':'fail';
+  L.push(a2&&a3?'One preparation is enough: every pass the app starts after it overdubs onto track 1.':a2?'The preparation lasted for one pass only.':a3?'Pass B overdubbed but Pass A did not: run both again.':'After the preparation, passes started by the app did not overdub.');
+  verdict('tPrep',s,L); return L[L.length-1];
+}
+async function runFixed2(){
+  const e=p4Need(); if(e) return e; const P=S.diag.p4f; if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
+  const a=i=>S.diag.ans['tFixed:'+i], mid=[0,1,2].find(i=>a(i)===2), low=[0,1,2].find(i=>a(i)===1), k=mid!=null?mid+1:2, kl=low!=null?low+1:1;
+  const err=await p4Multi('tFixed',[P4.F.x4],[1],'Pass 2: a new tone on USB 2 only, into the same recording'); if(err) return err;
+  const fb=await tpFileNow(); await p4Solos('tFixed',[k,kl]);
+  const same=sameFile(P.f1,fb), L=[...(S.diag.extra.tFixed||[]).filter(x=>!/^Pass 2|^Run 2/.test(x)),
+    `Run 2: file before ${fileTxt(P.f1)}, after ${fileTxt(fb)}${same===false?': a new recording, so the TP-7 was not in edit mode':same?': the same recording':''}. The app then played track ${k} (the mid tone) alone, then track ${kl} (the low tone) alone.`];
+  verdict('tFixed','info',L); return 'Answer the two Run 2 questions.';
 }
 DIAG.push(
- {id:'sxMap',t:'Map the SysEx commands',how:'Automatic, about 6 minutes in four runs. TP-7 stopped, a test recording loaded; recordings may change or disappear. Run 1 sends every command with no payload (except 0x04, which switches the TP-7 to file-transfer mode and would drop the connection) and records each answer. Run 2 does the same for all 128 transport sub-commands and notes any change of the loaded file. Run 3 retries every accepted one with a value. Run 4 uses the file protocol, read only: lists the folders, finds the loaded recording, reads its metadata and the start of the file. If the TP-7 stops answering, replug it or switch it off and on, tap Connect MIDI, then tap the same Run again: it continues where it stopped.',
-  acts:[['Run 1',runSxMap1],['Run 2',runSxMap2],['Run 3',runSxMap3],['Run 4',runSxMap4]],qs:[['Did the TP-7 do anything visible during the runs?',['Nothing visible','Screen or lights changed','It restarted or disconnected']]]},
- {id:'sxWrite',t:'Write recording metadata by SysEx',how:'Automatic, about 20 s per run. Run 1 reads the metadata of the loaded recording and writes it back unchanged, then reads it again. Run 2 adds one cue to the cue list in that metadata, if it has one, and writes it. If the TP-7 then shows the extra cue, the app can place markers directly, without playing the recording through.',
-  acts:[['Run 1',runSxWrite1],['Run 2',runSxWrite2]],qs:[['After Run 2, does the TP-7 show one more cue on this recording?',['Yes','No','Not sure']]],av:(a,r)=>a(0)===0?'pass':r?r.s:null},
- {id:'sxDel',t:'Delete the loaded recording by SysEx',how:'Automatic, about 10 s, and destructive. Deletes the recording that is loaded on the TP-7 now through the file protocol, then checks the listing. If it works, the app can clean up test recordings and discard bad takes itself.',
-  acts:[['Run',runSxDel]],qs:[['Allow deleting the recording that is loaded on the TP-7 when you tap Run?',['Yes, delete it','No']]]}
+ {id:'seqEdit',t:'Find edit mode from the app',how:'Automatic, about 4 minutes. Record sources USB 1 only; TP-7 stopped and not in edit mode. The app tries 21 short sequences of the sub-commands the TP-7 accepts, among them arm, stop, disarm (like holding record and pressing stop, the hand gesture for edit mode). After each one it records a 2-second pass. A new recording means nothing changed. A pass that lands in the loaded recording means the sequence put the TP-7 in edit mode: the run then stops, you answer what the TP-7 shows, leave edit mode by hand and tap Run to go on. Each sequence leaves a short recording, which you can delete afterwards.',
+  acts:[['Run',runSeqEdit],['Start over',runSeqEditReset]],qs:[['When the run stopped at a sequence, what did the TP-7 show?',['Edit mode','Normal','Something else (note it)']]]},
+ {id:'seqOver',t:'Find overdub from the app',how:'Mostly automatic, about 8 minutes. Record sources USB 1 only. Run 1 records a long base of low bursts (about 1.5 minutes) and, if test 6 or 7 found edit mode, sends it; otherwise enter edit mode by hand and keep track 1. Run 2 tries 27 sequences in edit mode; after each one it records a short pass a little further along the base, so the passes never overlap and nothing needs rewinding. Run 3 plays the base back once and checks every pass: base still there under the pass means overdub, base gone means overwrite. A sequence after which the result flips switches overdub or overwrite from the app. If a sequence leaves edit mode (the pass makes a new recording), Run 2 stops: load the base again, enter edit mode and tap Run 2 to go on.',
+  acts:[['Run 1',runSeqBase],['Run 2',runSeqOver],['Run 3',runSeqListen]],qs:[['Before Run 2, did the TP-7 show overdub or overwrite?',['Overdub','Overwrite','Not sure']]]},
+ {id:'tPrep',t:'Passes into one recording',how:'You and the app, about 3 minutes. Record sources USB 1 only. Base records 16 low bursts as a new recording. Then prepare the TP-7 once: by hand (edit mode: hold record, press stop; track 1; overdub: hold record, press >), or tap Prepare from the app if tests 6 to 8 found the commands. Pass A and Pass B then run without touching the TP-7: each rewinds (two SysEx stops, then sub-command 0x4a, then by hand if the tape still has not moved), arms, records new bursts, disarms and plays the file back. Pass if both passes overdub onto the base: the everyday case of laying one loop pass over another.',
+  acts:[['Base',runPrepBase],['Prepare from the app',()=>runRemotePrep('tPrep')],['Pass A',()=>runPrep(2)],['Pass B',()=>runPrep(3)]],qs:[['How did you prepare the TP-7?',['By hand','From the app','From the app, fixed by hand']],['While the passes recorded, did you hear the earlier passes on the TP-7?',['Yes','No']]]},
+ {id:'tPunch',t:'Record from a bar marker',how:'Mostly automatic, about 4 minutes. Uses the recording from test 9. Run 1 places a marker on each bar (TP-7 not in edit mode). Then put the TP-7 in edit mode with overdub, by hand or with Prepare from the app: in edit mode a pass records where the tape stands, so jumping to a marker first may punch in there. Runs A to C try to record 4 bursts into bar 3 with remote commands only: A arms, then holds the bar 3 cue note; B holds the cue note, then arms while it plays; C taps the cue, stops, arms and starts by SysEx. Each run plays the file back from bar 1 and checks where the bursts landed. The hand attempt is gone: in MIDI cue mode the TP-7 does not let you select a cue by hand (24 Oct).',
+  acts:[['Run 1',runPunch1],['Prepare from the app',()=>runRemotePrep('tPunch')],['Run A',()=>runPunch('A')],['Run B',()=>runPunch('B')],['Run C',()=>runPunch('C')]],qs:[['During the attempts, did the TP-7 record (red light) at any point?',['Yes','No','Not sure']]]},
+ {id:'tFixed',t:'One fixed setup, the app picks the track',how:'You listen, about 4 minutes. Once, by hand: input mode manual, record sources line 1, USB 1 and USB 2 (at 96 kHz the TP-7 records three tracks at once); guitar muted. Run 1 sends a low tone on USB 1 and a mid tone on USB 2, records 2 bars as a new recording, then plays each track alone by muting the others (CC 120). Answer what you heard per track. Then put the TP-7 in edit mode with overdub, by hand or with Prepare from the app. Run 2 records a new tone on USB 2 only into the same recording, then plays the mid-tone track and the low-tone track alone. If the mid-tone track holds both tones and the low-tone track is unchanged, the app picks the track for every pass by sending to a different USB pair, and sources that stay silent do not erase their tracks. Needs 4 output channels.',
+  acts:[['Run 1',runFixed1],['Prepare from the app',()=>runRemotePrep('tFixed')],['Run 2',runFixed2]],
+  qs:[['Track 1 alone',['Nothing','Low tone','Mid tone','Several']],['Track 2 alone',['Nothing','Low tone','Mid tone','Several']],['Track 3 alone',['Nothing','Low tone','Mid tone','Several']],['Run 2: the mid-tone track alone',['Mid tone plus the new tone','Only the new tone','Only the mid tone','Nothing']],['Run 2: the low-tone track alone',['Still the low tone','Silent','Something else']]],
+  av:(a,r)=>{ if(r&&r.s==='fail') return 'fail'; const t=[0,1,2].map(a); if(t.some(x=>x==null)) return null; const sep=[1,2].every(v=>t.filter(x=>x===v).length===1)&&t.includes(0);
+    if(a(3)==null||a(4)==null) return sep?null:'fail'; return sep&&a(3)===0&&a(4)===0?'pass':sep?'warn':'fail'; }}
 );
 const DIAG_PLAN=[
   ['Part 1: setup and this phone',['setup','sys']],
-  ['Part 2: timing. On the TP-7: record sources USB 1 only, MIDI setting cue, stopped, cue utility off',['tStart','tFull','tLoopRec','lLat','lSelf']],
-  ['Part 3: guitar. On the TP-7: record sources line 1 and USB 1 again, guitar in line 1',['inScan','lGtr','sTempo']],
-  ['Part 4: recording onto TP-7 tracks, the app doing as much as it can. MIDI setting cue; record sources USB 1 only unless a test says otherwise',['tSame','tPrep','tTrack2','tPunch','tMonitor','tFixed']],
-  ['Part 5: footswitch',['bleIn']],
-  ['Part 6: SysEx command map. TP-7 stopped, a test recording loaded; recordings may be changed or deleted',['sxMap','sxWrite','sxDel']]
+  ['Part 2: timing. On the TP-7: record sources USB 1 only, MIDI setting cue, stopped, cue utility off',['tStart','tFull','lLat']],
+  ['Part 3: what the app can switch on the TP-7. Record sources USB 1 only, TP-7 stopped; these tests make short recordings you can delete afterwards',['sxStep','seqEdit','seqOver']],
+  ['Part 4: recording passes into one file. MIDI setting cue; record sources USB 1 only unless a test says otherwise',['tPrep','tPunch','tFixed']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -3339,7 +3319,7 @@ function diagEnv(){
 function diagReport(){
   const D=S.diag, cnt={pass:0,warn:0,fail:0,info:0,none:0}; DIAG.forEach(t=>{ cnt[dgV(t)||'none']++; });
   const L=['Tinebox TP-7 diagnostics, '+new Date().toLocaleString(),'App build: '+APP_BUILD,
-    `Results: ${cnt.pass} pass, ${cnt.warn} check, ${cnt.fail} fail, ${cnt.info} noted, ${cnt.none} not run`,...diagEnv(),`TP-7 firmware: ${D.fw||'(not entered)'}`,''];
+    `Results: ${cnt.pass} pass, ${cnt.warn} check, ${cnt.fail} fail, ${cnt.info} noted, ${cnt.none} not run`,...diagEnv(),`TP-7 firmware: ${D.fw||'(not entered)'}`,...(D.rw4a?[`Rewinds by sub-command 0x4a when two SysEx stops left the tape in place: ${D.rw4a.ok} worked, ${D.rw4a.no} failed`]:[]),''];
   DIAG.forEach(t=>{
     if(t.grp){ L.push(''); L.push(t.grp); }
     const answered=t.qs.some((q,qi)=>D.ans[t.id+':'+qi]!=null), v=dgV(t);
@@ -3362,7 +3342,7 @@ function updReport(){ clearTimeout(updReport.t); updReport.t=setTimeout(()=>{ co
 function renderDiag(){
   const el=$('#dgIn'); if(!el) return; const D=S.diag, how=t=>typeof t.how==='function'?t.how():t.how;
   el.innerHTML=`<div class="rv-head"><h2 id="dgTitle">TP-7 diagnostics <small style="font-weight:500;color:var(--ink-2);font-size:13px">build ${APP_BUILD}</small></h2><button type="button" class="btn" data-dact="close">Close</button></div>
-  <p class="note">Everything runs on this screen. Connect the TP-7 by USB-C, tap Connect MIDI in the TP-7 tab (allow SysEx), and set the TP-7 MIDI setting to cue. Run the tests from top to bottom: each one ends with Pass, Check, Fail or Noted. Part 2 needs the TP-7 record sources set to USB 1 only, so the app can hear its own sound come back; Part 3 needs line 1 and USB 1 again. Part 2 leaves three short test recordings on the TP-7, which you can delete afterwards. Part 4 tests recording onto tracks of one file and needs a few steps on the TP-7 by hand; Part 5 checks Bluetooth MIDI for a footswitch. Then copy the report and paste it into our chat.</p>
+  <p class="note">Everything runs on this screen. Connect the TP-7 by USB-C, tap Connect MIDI in the TP-7 tab (allow SysEx), and set the TP-7 MIDI setting to cue. Run the tests from top to bottom: each one ends with Pass, Check, Fail or Noted. Set the TP-7 record sources to USB 1 only, so the app can hear its own sound come back; only test 11 asks for other sources. Part 3 looks for TP-7 settings the app can switch remotely; Part 4 records passes into one file and uses what Part 3 found. Parts 2 to 4 leave short test recordings on the TP-7, which you can delete afterwards. Then copy the report and paste it into our chat.</p>
   <div class="orow"><button type="button" class="btn" data-dact="fresh">Start a fresh round</button></div>
   <h3>Your TP-7</h3>
   <label class="dg-l">Firmware version<input class="dg-in" data-df="fw" value="${esc(D.fw)}" placeholder="For example 1.1.11"></label>
@@ -3391,7 +3371,7 @@ function bindDiag(){
     const b=e.target.closest('[data-dact]'); if(!b) return; const a=b.dataset.dact;
     if(a==='close'){ root.hidden=true; return; }
     if(a==='copy'){ const txt=diagReport(), ta=$('#dgReport'); ta.value=txt; try{ await navigator.clipboard.writeText(txt); toast('Report copied.'); }catch(err){ ta.focus(); ta.select(); toast('Select all the text in the box and copy it.'); } return; }
-    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.sx={}; D.p4=null; D.p4f=null; D.sxmap=null; D.sxw=null; D.res_u3=null; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
+    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.sx={}; D.p4=null; D.p4f=null; D.sxmap=null; D.sxw=null; D.sxs=null; D.seqE=null; D.seqO=null; D.rw4a=null; D.res_u3=null; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
     if(a==='applyMD'){ if(S.diag.mdKind==='take'){ S.tp.takeCueDelay=+b.dataset.v; toast(`Delay for markers set during takes: ${S.tp.takeCueDelay} ms.`); } else { S.tp.mDelay=+b.dataset.v; toast(`Marker pass delay set to ${S.tp.mDelay} ms.`); } S.diag.mdSug=null; save(); renderDiag(); return; }
     if(a==='applyLat'){ S.looper.lat=+b.dataset.v/1000; S.looper.latHow='corrected by the diagnostics'; S.diag.latSug=null; save(); renderDiag(); toast(`Looper latency set to ${b.dataset.v} ms.`); return; }
     if(a==='apply'){ S.diag.tStartSug=null; setOffset(+b.dataset.v); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms for ${offKey()}.`); return; }
@@ -3982,6 +3962,7 @@ if(!S.diag.m39){ const A=S.diag.ans; if(A['setup:4']!=null) A['setup:3']=A['setu
 if(!S.tp.mig8){ S.tp.clock=true; if(S.tp.mDelay==null||S.tp.mDelay===30) S.tp.mDelay=76; S.tp.mig8=true; } // clock gives each take the project tempo; 76 ms measured on 3 Oct
 if(!S.tp.mig9){ S.tp.clock=false; S.tp.mig9=true; } // 5 Oct: takes kept the TP-7's own tempo even with clock and song position
 if(!S.tp.mig10){ if(S.tp.mDelay===76) S.tp.mDelay=79; S.tp.mig10=true; } // 5 Oct: median 3.3 ms early at 76 ms
+if(!S.tp.mig11){ S.tp.midiLoop=-1; S.tp.mig11=true; } // 24 Oct: loop points sent during a take are ignored (heard bars 1 2 3 4)
 if(!S.tp.mig7){ if(S.tp.startMode==='start') S.tp.startMode='sysex'; if(S.tp.mDelay==null) S.tp.mDelay=30; S.tp.mig7=true; }
 if(!S.tp.mig6){ S.tp.offsets=Object.assign({'48 kHz, 1 ch':10,'96 kHz, 6 ch':4},S.tp.offsets||{}); S.tp.mig6=true; } // measured on this TP-7, 30 Sep and 1 Oct
 if(S.tp.clock==null) S.tp.clock=false; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
