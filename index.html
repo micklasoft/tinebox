@@ -1145,7 +1145,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='47 (24 Oct 2026)';
+const APP_BUILD='49 (24 Oct 2026)';
 // 24 Oct: 0x04 toggles edit mode (no reply), 0x4a goes to the start (also in edit mode, where stop does not rewind), 0x3e calibrates the reel
 const SXOP={session:0x40,play:0x50,stop:0x51,edit:0x04,start:0x4a}; let sxId=0;
 const SXN={0x40:'Start Session',0x50:'Play',0x51:'Stop',0x04:'Edit mode toggle',0x4a:'Go to start',0x3e:'Reel calibration',0x0b:'Read edit mode',0x0c:'Read 0x0c',0x3d:'0x3d (self-test)'}, sxSent={};
@@ -2567,7 +2567,7 @@ async function runSysCheck(){
     if(R.tpInfo) P.push(`The TP-7 identifies itself over SysEx: ${R.tpInfo.product||'TP-7'}, firmware ${R.tpInfo.sw_version||'?'}${R.tpInfo.mode?', mode '+R.tpInfo.mode:''}.`); else W.push('The TP-7 did not answer the identity request (SysEx greet).'); }
   if(!ctx||ctx.state!=='running') F.push('Audio is not running. Tap anywhere on the screen, then run this again.');
   else { P.push(`Audio: ${ctx.sampleRate/1000} kHz, ${ctx.destination.maxChannelCount} output channel${ctx.destination.maxChannelCount>1?'s':''}, output latency ${msTxt(ctx.outputLatency)}.`);
-    if(ctx.destination.maxChannelCount<4) W.push(`Only ${ctx.destination.maxChannelCount} output channel${ctx.destination.maxChannelCount>1?'s':''}: the app plays mono into USB 1, and a third TP-7 track from the app (test 8) needs at least 4. On 24 Oct the phone offered 6 once, right after GarageBand had been opened; test 7 looks for the cause.`); }
+    if(ctx.destination.maxChannelCount<4) W.push(`Only ${ctx.destination.maxChannelCount} output channel${ctx.destination.maxChannelCount>1?'s':''}: the app plays mono into USB 1, and a third TP-7 track from the app (test 8) needs at least 4. Open GarageBand once after connecting the TP-7 (any song), then come back: on 24 Oct that gave 6 channels twice.`); }
   const k=offKey(), offs=S.tp.offsets||{};
   if(offs[k]!=null) P.push(`Timing offset for this audio setup (${k}): ${offs[k]} ms.`);
   else if(offs[setupKey()]!=null) W.push(`Timing offset for ${k} is borrowed from MIDI start (${offs[setupKey()]} ms). Run Start timing to measure it.`);
@@ -2733,7 +2733,7 @@ DIAG.push(
   qs:[['MIDI setting (hold mode, MIDI)',['cue','sync','ctrl or off']],['Auto start (stop + record, AUTO)',['off','on']],['Count-in (stop + record, COUNT)',['off','on']],['Sample rate (RATE)',['96 kHz','48 kHz','not sure']]]},
  {id:'sys',t:'System check',nomidi:true,how:'Automatic, about 10 s. Checks MIDI and SysEx, audio, timers, wake lock, storage, offline readiness and audio input, then runs the sequencer silently for 5 s to make sure it never falls behind.',
   acts:[['Run',runSysCheck]],qs:[]},
- {id:'tStart',t:'Start timing',how:'Automatic, about a minute. Record sources USB 1 only, TP-7 stopped, cue utility off. Records 8 bars of clicks with a sweep across the downbeat, rewinds, plays it back over USB and measures where the recording began. The result is stored for this audio setup.',
+ {id:'tStart',t:'Start timing at 6 channels',how:'Only if you use 6 output channels (after opening GarageBand): the offset is stored per audio setup, and 48 kHz with 6 channels has never been measured. At 1 channel it is settled (within 1.5 ms in three runs on 24 Oct). Automatic, about a minute. Record sources USB 1 only, TP-7 stopped, cue utility off. Records 8 bars of clicks with a sweep across the downbeat, rewinds, plays it back over USB and measures where the recording began. The result is stored for this audio setup.',
   acts:[['Run',runStartTiming]],qs:[],extra:()=>S.diag.tStartSug!=null?`<button type="button" class="btn" data-dact="apply" data-v="${S.diag.tStartSug}">Use ${S.diag.tStartSug} ms as timing offset</button>`:''},
  {id:'tFull',t:'Full take with automatic bar markers',how:'Automatic, about a minute. Runs a real take through the Record tab’s own code: about 8 bars, music muted, a bar code playing instead. When the take ends, the marker pass must start by itself. The test then triggers every marker and measures where it lands. The diagnostics take is removed from your take list afterwards; the TP-7 keeps the file.',
   acts:[['Run',runFullTake]],qs:[],extra:()=>S.diag.mdSug!=null&&S.diag.mdKind==='pass'?`<button type="button" class="btn" data-dact="applyMD" data-v="${S.diag.mdSug}">Use ${S.diag.mdSug} ms as marker delay</button>`:''},
@@ -2776,6 +2776,7 @@ async function p4Listen(id,secs,o){
   o=o||{}; if(!(await lpOpenInput())) return null; if(LP.armed) lpArm(false); mNow([0xB0,14,0]);
   if(!o.cue0) await tpEnsureStart(id); lpStartCap(secs+2);
   if(o.cue0) mNow([0x90,0,100]); else { mNow(sxMsg(SXOP.session)); mNow(sxMsg(SXOP.play)); }
+  if(o.loopOff) setTimeout(()=>mNow([0xB0,17,0]),150);
   if(o.solo) o.mute=[1,2,3,4,5,6].filter(k=>k!==o.solo);
   if(o.mute) setTimeout(()=>o.mute.forEach(ch=>mNow([0xB0|(ch-1),120,127])),150);
   setDs(id,o.say||(o.mute?'Playing it back with track 1 muted. Listen…':'Playing the recording back and listening…')); await sleep(secs*1000+800);
@@ -2800,7 +2801,10 @@ function gridFit(on,beat){ if(on.length<3) return null; const k=on.map(t=>Math.r
 const onGrid=(g,on)=>on.map(t=>{ const k=Math.round((t-g.a)/g.b); return {k,dt:t-(g.a+k*g.b)}; }).filter(x=>Math.abs(x.dt)<g.b*0.3);
 const msR=a=>a.length?`median ${medOf(a)>=0?'+':''}${medOf(a).toFixed(1)} ms, range ${Math.min(...a).toFixed(1)} to ${Math.max(...a).toFixed(1)} ms`:'none';
 const barsOf=m=>[...new Set(m.map(x=>Math.floor(x.k/4)+1))].sort((a,b)=>a-b).join(', ')||'none';
-function p4Need(){ const e=tp7Ready(); if(e) return e; initAudio(); if(LP.armed) lpArm(false); return ''; }
+// 15:47 report: after the TP-7 was unplugged and plugged back in, MIDI went nowhere and tests 8 and 9 only played back
+async function tpAlive(){ if(R.sysex!==true) return true; if(await sxAlive()) return true; await midiConnect(); await sleep(900); return !!(await sxAlive()); }
+async function p4Need(){ const e=tp7Ready(); if(e) return e; initAudio(); if(LP.armed) lpArm(false);
+  if(!(await tpAlive())) return 'The TP-7 does not answer over MIDI, even after reconnecting. Tap Connect MIDI in the TP-7 tab, then run again.'; return ''; }
 
 // pitches: one per pass, so one playback tells the passes apart
 Object.assign(P4.F,{p4:3600,t2:4800,A:6000,B:7200,C:8400,D:9600,mon:2000,x1:300,x2:900,x3:2700,x4:5400});
@@ -2821,10 +2825,10 @@ async function p4Solos(id,list){ const beat=60/S.bpm; let cap1=null;
   for(const k of list){ const c=await p4Listen(id,8*beat+0.3,{solo:k,say:`Track ${k} alone: listen…`}); if(k===1) cap1=c; await sleep(500); }
   return cap1; }
 async function runFixed1(){
-  const e=p4Need(); if(e) return e; const n0=ctx.destination.maxChannelCount, beat=60/S.bpm; let n=n0;
-  for(let i=40;i>0&&n<4;i--){ setDs('tFixed',`The phone offers ${n} output channel${n>1?'s':''}. Waiting for more channels (see test 7); ${Math.ceil(i/2)} s…`); await sleep(500); n=ctx.destination.maxChannelCount; }
+  const e=await p4Need(); if(e) return e; const n0=ctx.destination.maxChannelCount, beat=60/S.bpm; let n=n0;
+  for(let i=40;i>0&&n<4;i--){ setDs('tFixed',`The phone offers ${n} output channel${n>1?'s':''}. Open GarageBand once, then come back; ${Math.ceil(i/2)} s…`); await sleep(500); n=ctx.destination.maxChannelCount; }
   const L=[`The phone offered ${n0} output channel${n0>1?'s':''} at ${ctx.sampleRate/1000} kHz${n!==n0?`, then ${n} during the wait`:''}.`];
-  if(n<4){ verdict('tFixed','fail',[...L,'This setup needs at least 4 (two USB pairs). Test 7 looks for what makes the phone offer more.']); return `Only ${n} output channel${n>1?'s':''}.`; }
+  if(n<4){ verdict('tFixed','fail',[...L,'This setup needs at least 4 (two USB pairs). Open GarageBand once after connecting the TP-7, then run again.']); return `Only ${n} output channel${n>1?'s':''}.`; }
   const err=await p4Multi('tFixed',[P4.F.x1,P4.F.x2],[0,1],'Pass 1: low tone on USB 1, mid tone on USB 2, nothing on line 1'); R.tpFileBefore=R.passFile0;
   if(err){ verdict('tFixed','fail',[...L,err]); return err; }
   const f1=await tpFileNow(); S.diag.p4f={bpm:S.bpm,f1}; save(); L.push(`Recording: ${fileTxt(f1)}${R.tpFileBefore&&sameFile(R.tpFileBefore,f1)?' (added to the recording that was loaded, not a new one)':''}.`);
@@ -2865,99 +2869,11 @@ async function sxState(){ R.tpFile=null; const pos=await tpPosNow(); await sleep
 DIAG.push(
 );
 /* build 45 */
-/* Part 3 (build 45): look for remote control of edit mode and of overdub/overwrite.
-   One sub-command entered edit mode during the 24 Oct map, so sequences of the accepted sub-commands may reach other hand-only
-   settings too. Every try ends in a short pass; the file notice and one playback tell what the pass did. */
-// by hand, overdub or overwrite is "hold record, press >": try every accepted sub-command alone, while armed, and between 0x03/0x3d + 1 and + 0
-const SEQ_O=[
- ['nothing (edit mode as it is set now)',[]],
- ['0x02',[0x02]],['0x03',[0x03]],['0x03 + 1',[[0x03,1]]],['0x03 + 0',[[0x03,0]]],
- ['0x3d',[0x3d]],['0x3d + 1',[[0x3d,1]]],['0x3d + 0',[[0x3d,0]]],['0x41',[0x41]],['0x55',[0x55]],
- ['arm, 0x02, disarm',['arm',0x02,'disarm']],['arm, 0x03, disarm',['arm',0x03,'disarm']],
- ['arm, 0x3d, disarm',['arm',0x3d,'disarm']],['arm, 0x55, disarm',['arm',0x55,'disarm']],['arm, 0x41, disarm',['arm',0x41,'disarm']],['arm, 0x4a, disarm',['arm',0x4a,'disarm']],
- ['0x03 + 1, 0x55, 0x03 + 0',[[0x03,1],0x55,[0x03,0]]],['0x03 + 1, 0x02, 0x03 + 0',[[0x03,1],0x02,[0x03,0]]],['0x03 + 1, play, 0x03 + 0',[[0x03,1],0x50,[0x03,0]]],
- ['0x3d + 1, 0x55, 0x3d + 0',[[0x3d,1],0x55,[0x3d,0]]],['0x3d + 1, 0x02, 0x3d + 0',[[0x3d,1],0x02,[0x3d,0]]],['0x3d + 1, play, 0x3d + 0',[[0x3d,1],0x50,[0x3d,0]]],
- ['nothing again (the final state)',[]]];
-async function seqSend(steps){
-  for(const s of steps){ if(s==='arm') mNow([0xB0,14,127]); else if(s==='disarm') mNow([0xB0,14,0]); else mNow(sxReq(0x7F,Array.isArray(s)?s:[s]).bytes); await sleep(200); }
-  if(steps.includes(0x50)){ mNow(sxMsg(SXOP.stop)); await sleep(300); } }
 
 
-// test 9 (optional): in edit mode, which sequence switches between overdub and overwrite? Passes go one after another along a long base,
-// so they never overlap and need no rewinding; one playback at the end shows for each pass whether the base survived under it.
-const seqO=()=>S.diag.seqO;
-async function tpSeek(t,id){ let p=await tpPosNow(); if(p>=t-150) return p; setDs(id,`Moving the tape on to ${(t/1000).toFixed(1)} s…`);
-  mNow([0xB0,14,0]); mNow(sxMsg(SXOP.play)); await waitFor(()=>R.tpPos!=null&&R.tpPos>=t-150,(t-p)+2500,20); mNow(sxMsg(SXOP.stop)); await sleep(400); return await tpPosNow(); }
-const SOK={overdub:'overdub (the base is still there under the pass)',overwrite:'overwrite (the pass replaced the base)',off:'the pass is not on track 1 and the base is intact (another track, or nothing recorded)',erased:'the base is gone and the pass is not on track 1',unclear:'unclear',short:'too short to judge'};
-function seqOLines(){
-  const P=seqO(); if(!P) return []; const L=[`Base recording ${fileTxt(P.base)}, ${Math.round(P.baseLen)} s.`];
-  P.segs.slice().sort((a,b)=>a.i-b.i).forEach(s=>L.push(`${SEQ_O[s.i][0]}: pass at ${(s.from/1000).toFixed(1)} to ${(s.to/1000).toFixed(1)} s${s.newFile?', but in a new recording (edit mode was left)':''}.${s.moved}${s.kind?` Result: ${SOK[s.kind]}${s.changed?', changed by this sequence':''}.`:''}`));
-  if(P.seekFail) L.push(`Moving the tape on by playing failed ${P.seekFail} time${P.seekFail>1?'s':''}, so some passes may sit closer together than planned.`);
-  return L;
-}
-async function runSeqBase(){
-  const e=p4Need(); if(e) return e; const beat=60/S.bpm, per=4*beat+0.9, N=Math.ceil((3+SEQ_O.length*per+3)/beat);
-  setDs('seqOver',`Recording the base: ${N} beats of low bursts, about ${Math.round(N*beat)} s…`);
-  await p4Pass('seqOver',P4.F.p1,`Base recording, ${N} beats`,{beats:N});
-  const fb=await tpFileNow(); if(!fb) return 'No file notice came back. Check the TP-7 and Run 1 again.';
-  S.diag.seqO={bpm:S.bpm,base:fb,baseLen:N*beat,next:0,segs:[],nextFree:3,seekFail:0}; save(); dgExtra('seqOver',seqOLines());
-  if(S.diag.res) delete S.diag.res.seqOver;
-  const r=await tpSetEdit(true);
-  return `Base recorded. ${r.sent?'Edit mode turned on with 0x04':'Edit mode was already on'}${r.after===0xff?', but 0x0b still reads ff: check the TP-7':''}. Keep track 1. If you know how to switch to overwrite by hand, do it now: then the run can also find a command that sets overdub. Then Run 2.`;
-}
-async function runSeqOver(){
-  const e=p4Need(); if(e) return e; const P=seqO(); if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
-  const beat=60/S.bpm; if(P.next>=SEQ_O.length) return 'All sequences tried. Now Run 3.';
-  for(let i=P.next;i<SEQ_O.length;i++){
-    const [label,steps]=SEQ_O[i], f=i%2?P4.F.p3:P4.F.p2, tag=`${i+1} of ${SEQ_O.length}: ${label}`;
-    setDs('seqOver',`${tag}…`);
-    const s0=await sxState();
-    if(!s0.file||s0.file.path!==P.base.path) return `The TP-7 has ${fileTxt(s0.file)} loaded, not the base ${fileTxt(P.base)}. Load the base, enter edit mode, then Run 2 to go on.`;
-    if(P.nextFree+4*beat+1>P.baseLen){ P.next=SEQ_O.length; save(); return 'The base is full. Now Run 3.'; }
-    const p0=await tpSeek(P.nextFree*1000,'seqOver'); if(p0<P.nextFree*1000-300) P.seekFail++;
-    setDs('seqOver',`${tag}…`); await seqSend(steps); await sleep(400);
-    let p1=await tpPosNow(), moved='';
-    if(p1<p0-500){ moved=` The sequence moved the tape back to ${(p1/1000).toFixed(1)} s.`; p1=await tpSeek(P.nextFree*1000,'seqOver'); }
-    else if(p1>p0+500) moved=` The sequence moved the tape on to ${(p1/1000).toFixed(1)} s.`;
-    await p4Pass('seqOver',f,`${tag}, then a pass`,{rewind:false,beats:4});
-    const s2=await sxState(), al=await sxAlive(), seg={i,f,from:p1,to:s2.pos,moved,newFile:!!(s2.file&&s2.file.path!==P.base.path)};
-    P.segs=P.segs.filter(x=>x.i!==i).concat([seg]); P.next=i+1; if(!seg.newFile) P.nextFree=Math.max(P.nextFree,s2.pos/1000+0.6); save(); dgExtra('seqOver',seqOLines());
-    if(seg.newFile) return `"${label}": the pass made a new recording, so this sequence left edit mode. Load the base ${fileTxt(P.base)} again, enter edit mode, then Run 2 to go on.`;
-    if(al!=='normal') return `After "${label}" the TP-7 ${al?'reported mode '+al:'stopped answering'}. Switch it off and on, load the base, enter edit mode, then Run 2.`;
-  }
-  return 'All sequences tried. Now Run 3: the app plays the base back and works out what each pass did.';
-}
-async function runSeqListen(){
-  const e=p4Need(); if(e) return e; const P=seqO(); if(!P||!P.segs.length) return 'Run 2 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
-  const beat=60/S.bpm, st=await sxState();
-  if(!st.file||st.file.path!==P.base.path) return `Load the base ${fileTxt(P.base)} on the TP-7 first.`;
-  const segs=P.segs.filter(s=>!s.newFile).sort((a,b)=>a.i-b.i), end=Math.min(P.baseLen,Math.max(5,...segs.map(s=>s.to/1000))+1.5);
-  const cap=await p4Listen('seqOver',end,{say:`Playing the first ${Math.round(end)} s of the base and listening…`});
-  if(!cap) return 'No audio input: allow the microphone, then Run 3 again.';
-  const sc=toneScan(cap,[P4.F.p1,P4.F.p2,P4.F.p3]), base=sc[0].on, on=f=>sc.find(x=>x.f===f).on;
-  if(base.length<4){ verdict('seqOver','fail',[...seqOLines(),'The app heard almost none of the base.',SRC_HINT()]); return 'The base was not heard.'; }
-  // file time → capture time: base bursts sit on the beat grid from 0 s in the file; playback reaches the capture about 0.3 s after Play
-  let off=base[0]-Math.max(0,Math.round((base[0]-0.3)/beat))*beat; const res=base.map(t=>{ const x=t-off; return x-Math.round(x/beat)*beat; }).sort((a,b)=>a-b); off+=res[res.length>>1];
-  const cnt=(arr,a,b)=>arr.filter(t=>t>=a&&t<=b).length;
-  let prev=null;
-  segs.forEach(s=>{ const a=s.from/1000+off, b=s.to/1000+off, ia=a+0.15, ib=b-0.15, exp=Math.max(0,Math.floor((ib-off)/beat)-Math.ceil((ia-off)/beat)+1);
-    const own=cnt(on(s.f),a-0.15,b+0.15), bk=cnt(base,ia,ib);
-    s.kind=exp<2?'short':own>=2?(bk>=Math.max(1,exp*0.5)?'overdub':bk<=exp*0.25?'overwrite':'unclear'):(bk>=exp*0.5?'off':bk<=exp*0.25?'erased':'unclear');
-    s.changed=false; if(s.kind==='overdub'||s.kind==='overwrite'){ if(prev&&prev.kind!==s.kind) s.changed=true; prev=s; } });
-  const dec=segs.filter(s=>s.kind==='overdub'||s.kind==='overwrite'), first=segs[0];
-  P.baseKind=first&&first.i===0?first.kind:null; P.toOver=null; P.toOverwrite=null;
-  dec.forEach(s=>{ if(s.changed&&s.kind==='overdub'&&P.toOver==null) P.toOver=s.i; if(s.changed&&s.kind==='overwrite'&&P.toOverwrite==null) P.toOverwrite=s.i; }); save();
-  const ch=dec.filter(s=>s.changed), offT=segs.filter(s=>s.kind==='off'||s.kind==='erased'), L=seqOLines();
-  if(P.baseKind) L.push(`As set at the start, edit mode records in ${P.baseKind}.`);
-  L.push(ch.length?`Switched from the app: ${ch.map(s=>`${SEQ_O[s.i][0]} (to ${s.kind})`).join('; ')}.`:'No sequence switched between overdub and overwrite.');
-  if(offT.length) L.push(`Passes missing from track 1 after: ${offT.map(s=>SEQ_O[s.i][0]).join('; ')}. One of these may have selected another track; check how many tracks the TP-7 shows.`);
-  const ok=P.toOver!=null||(P.baseKind==='overdub'&&P.toOverwrite!=null);
-  verdict('seqOver',ok?'pass':'info',L);
-  return ok?'Found a way to switch overdub from the app.':ch.length?'The mode changed, see below.':'No sequence switched the mode.';
-}
 
 async function runFixed2(){
-  const e=p4Need(); if(e) return e; const P=S.diag.p4f; if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
+  const e=await p4Need(); if(e) return e; const P=S.diag.p4f; if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
   const a=i=>S.diag.ans['tFixed:'+i], mid=[0,1,2].find(i=>a(i)===2), low=[0,1,2].find(i=>a(i)===1), k=mid!=null?mid+1:2, kl=low!=null?low+1:1;
   const err=await p4Multi('tFixed',[P4.F.x4],[1],'Pass 2: a new tone on USB 2 only, into the same recording'); if(err) return err;
   const fb=await tpFileNow(); await p4Solos('tFixed',[k,kl]);
@@ -2966,9 +2882,7 @@ async function runFixed2(){
   verdict('tFixed','info',L); return 'Answer the two Run 2 questions.';
 }
 DIAG.push(
- {id:'seqOver',t:'Find overdub from the app',how:'Mostly automatic, about 7 minutes. Record sources USB 1 only. Run 1 records a long base of low bursts (about 1.5 minutes) and turns edit mode on with 0x04. On 24 Oct edit mode came up in overdub and the first five sequences changed nothing; 0x04 itself left edit mode, so it is no longer tried. Run 2 tries 23 sequences in edit mode; after each one it records a short pass a little further along the base, so the passes never overlap and nothing needs rewinding. Run 3 plays the base back once and checks every pass: base still there under the pass means overdub, base gone means overwrite. A sequence after which the result flips switches overdub or overwrite from the app. If a sequence leaves edit mode (the pass makes a new recording), Run 2 stops: load the base again, enter edit mode and tap Run 2 to go on.',
-  acts:[['Run 1',runSeqBase],['Run 2',runSeqOver],['Run 3',runSeqListen]],qs:[['Before Run 2, did the TP-7 show overdub or overwrite?',['Overdub','Overwrite','Not sure']]]},
- {id:'tFixed',t:'One fixed setup, the app picks the track',how:'You listen, about 4 minutes. Once, by hand: input mode manual, record sources line 1, USB 1 and USB 2 (at 96 kHz the TP-7 records three tracks at once); guitar muted. Needs at least 4 output channels: on 24 Oct the phone offered 6 only once, right after GarageBand had been opened, and setting three sources did not change it. Run test 7 first; if Run 1 finds fewer than 4 channels it waits 20 s. Run 1 sends a low tone on USB 1 and a mid tone on USB 2, records 2 bars as a new recording, then plays each track alone by muting the others (CC 120). Answer what you heard per track. Then tap Prepare from the app (it turns edit mode on with 0x04; edit mode came up in overdub on 24 Oct). Run 2 records a new tone on USB 2 only into the same recording, then plays the mid-tone track and the low-tone track alone. If the mid-tone track holds both tones and the low-tone track is unchanged, the app picks the track for every pass by sending to a different USB pair, and sources that stay silent do not erase their tracks. Needs 4 output channels.',
+ {id:'tFixed',t:'One fixed setup, the app picks the track',how:'You listen, about 4 minutes. Once, by hand: input mode manual, record sources line 1, USB 1 and USB 2 (at 96 kHz the TP-7 records three tracks at once); guitar muted. Needs at least 4 output channels: open GarageBand once after connecting the TP-7 (any song), then come back. If Run 1 finds fewer than 4 it waits 20 s. Run 1 sends a low tone on USB 1 and a mid tone on USB 2, records 2 bars as a new recording, then plays each track alone by muting the others (CC 120). Answer what you heard per track. Then tap Prepare from the app (edit mode on with 0x04) and set the TP-7 to dub by hand. Run 2 records a new tone on USB 2 only into the same recording, then plays the mid-tone track and the low-tone track alone. If the mid-tone track holds both tones and the low-tone track is unchanged, the app picks the track for every pass by sending to a different USB pair, and sources that stay silent do not erase their tracks. Needs 4 output channels.',
   acts:[['Run 1',runFixed1],['Prepare from the app',()=>runRemotePrep('tFixed')],['Run 2',runFixed2]],
   qs:[['Track 1 alone',['Nothing','Low tone','Mid tone','Several']],['Track 2 alone',['Nothing','Low tone','Mid tone','Several']],['Track 3 alone',['Nothing','Low tone','Mid tone','Several']],['Run 2: the mid-tone track alone',['Mid tone plus the new tone','Only the new tone','Only the mid tone','Nothing']],['Run 2: the low-tone track alone',['Still the low tone','Silent','Something else']]],
   av:(a,r)=>{ if(r&&r.s==='fail') return 'fail'; const t=[0,1,2].map(a); if(t.some(x=>x==null)) return null; const sep=[1,2].every(v=>t.filter(x=>x===v).length===1)&&t.includes(0);
@@ -2980,14 +2894,6 @@ async function tpEditRead(){ const r=await sxAsk(0x7F,[0x0b],500); return r.resp
 // turn edit mode on or off; 0x04 toggles, so read 0x0b first (ff = not editing, as far as we know) and only toggle when needed
 async function tpSetEdit(on){ const v=await tpEditRead(); if(v!=null&&(v!==0xff)===on) return {sent:false,v,after:v};
   mNow([0xB0,14,0]); mNow(sxMsg(SXOP.edit)); await sleep(700); return {sent:true,v,after:await tpEditRead()}; }
-async function runRemotePrep(id){
-  const e=tp7Ready(); if(e) return e; const r=await tpSetEdit(true), P=S.diag.seqO, over=P&&P.toOver!=null?SEQ_O[P.toOver]:null;
-  if(over){ await seqSend(over[1]); await sleep(400); }
-  const st=r.after==null?'0x0b gave no answer, so the state is unknown':r.after===0xff?'0x0b still reads ff, so edit mode may be off':`0x0b now reads ${hx([r.after])}`;
-  const line=`Prepared from the app: ${r.sent?'sent 0x04 (edit mode toggle)':'edit mode was already on (0x0b), nothing sent'}; ${st}${over?`; overdub by ${over[0]} (test 9)`:''}.`;
-  dgExtra(id,[...((S.diag.extra||{})[id]||[]).filter(x=>!/^Prepared from the app/.test(x)),line]);
-  return `${r.sent?'Edit mode toggled.':'Edit mode was already on.'} Check that the TP-7 shows edit mode with overdub, then go on.`;
-}
 
 
 DIAG.push(
@@ -2999,53 +2905,132 @@ DIAG.push(
 // test 6: the everyday source setup, line 1 and USB 1, with 1 output channel. Does each source get its own track,
 // and does a pass in edit mode keep the other track? The app hears track 1 over USB; track 2 is checked by ear.
 const peakDb=f=>{ let m=0; const x=f.l; for(let i=0;i<x.length;i++){ const a=Math.abs(x[i]); if(a>m) m=a; } return 20*Math.log10(m||1e-9); };
-async function runTwo1(){
-  const e=p4Need(); if(e) return e; const beat=60/S.bpm, ed=await tpSetEdit(false);
-  await p4Pass('tTwo',P4.F.x1,'Run 1: low bursts from the app on USB 1; keep the guitar silent',{beats:8});
-  const f1=await tpFileNow(); S.diag.p2t={bpm:S.bpm,f1}; save();
-  const c1=await p4Listen('tTwo',8*beat+0.5,{solo:1,say:'Playing track 1 alone and listening…'});
-  await sleep(400); await p4Listen('tTwo',8*beat+0.5,{solo:2,say:'Playing track 2 alone: listen…'});
-  const n=c1?toneScan(c1,[P4.F.x1])[0].on.length:null, L=[`Run 1 made the new recording ${fileTxt(f1)}${ed.sent?' (edit mode was on, so the app turned it off first)':''}.`];
-  L.push(c1?`Track 1 over USB: ${n} low bursts, peak ${peakDb(c1).toFixed(1)} dBFS.`:'No audio input, so track 1 was not checked.');
-  if(n!=null) L.push(n>=4?'The bursts from USB 1 are on track 1, so USB 1 did not get a track of its own.':'Track 1 holds no bursts: USB 1 went to another track. Answer which one you heard them on.');
-  S.diag.p2t.n1=n; S.diag.p2t.pk1=c1?peakDb(c1):null; S.diag.p2t.L1=L; save(); verdict('tTwo','info',L); return 'Answer what track 2 held, then Run 2.';
-}
-async function runTwo2(){
-  const e=p4Need(); if(e) return e; const P=S.diag.p2t; if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm); const beat=60/S.bpm;
-  const ed=await tpSetEdit(true);
-  await p4Pass('tTwo',P4.F.x2,'Run 2: mid bursts on USB 1. Strum a muted chord with every mid burst',{beats:8});
-  const fb=await tpFileNow(), same=sameFile(P.f1,fb);
-  const c1=await p4Listen('tTwo',8*beat+0.5,{solo:1,say:'Playing track 1 alone and listening…'});
-  await sleep(400); await p4Listen('tTwo',8*beat+0.5,{solo:2,say:'Playing track 2 alone: listen…'});
-  const sc=c1?toneScan(c1,[P4.F.x1,P4.F.x2]):null, L=[...(P.L1||[])];
-  L.push(`Run 2: ${ed.sent?'the app turned edit mode on (0x04)':'edit mode was already on'}; file after: ${fileTxt(fb)}${same===false?', a new recording, so edit mode was not on':same?', the same recording':''}.`);
-  if(c1) L.push(`Track 1 over USB after Run 2: peak ${peakDb(c1).toFixed(1)} dBFS${P.pk1!=null?` (Run 1: ${P.pk1.toFixed(1)} dBFS; your strums should raise it)`:''}, ${sc[0].on.length} low and ${sc[1].on.length} mid bursts.`);
-  verdict('tTwo','info',L); return 'Answer the two Run 2 questions.';
-}
 
 // test 7: what decides how many output channels the phone offers (1 all afternoon; 6 once, right after GarageBand was opened)
 async function runChMon(){
-  initAudio(); if(!ctx) return 'No audio.'; const D=ctx.destination, t0=performance.now(), L=[]; let last=null;
+  initAudio(); if(!ctx) return 'No audio.'; const D=ctx.destination, t0=performance.now(), L=[], C=S.diag.chm||(S.diag.chm={}); let last=null;
   const snap=()=>`${D.maxChannelCount} output channel${D.maxChannelCount>1?'s':''}, output latency ${((ctx.outputLatency||0)*1000).toFixed(1)} ms, audio ${ctx.state}`;
-  for(let i=0;i<240;i++){ const s=snap(); if(s!==last){ L.push(`+${Math.round((performance.now()-t0)/1000)} s: ${s}.`); last=s; dgExtra('chMon',L); }
+  for(let i=0;i<240;i++){ const s=snap(); if(s!==last){ L.push(`+${Math.round((performance.now()-t0)/1000)} s: ${s}.`); last=s; C.mon=L; save(); dgExtra('chMon',[...L,...(C.tr||[])]); }
     setDs('chMon',`Watching: ${s}. ${Math.ceil((240-i)/2)} s left.`); await sleep(500); }
   const ch=new Set(L.map(x=>/(\d+) output channel/.exec(x)[1]));
-  verdict('chMon','info',[...L,ch.size>1?'The channel count changed; your answer says what changed it.':'The channel count did not change.']);
+  verdict('chMon','info',[...L,...(C.tr||[]),ch.size>1?'The channel count changed; your answer says what changed it.':'The channel count did not change.']);
   return ch.size>1?'The count changed: answer what did it.':'The count stayed the same.';
 }
 DIAG.push(
- {id:'tTwo',t:'Guitar and app on separate tracks',how:'You play and listen, about 3 minutes. The everyday setup, set once by hand: input mode manual, record sources line 1 and USB 1, guitar in line 1. Works with 1 output channel. Run 1 turns edit mode off, records 8 low bursts from the app as a new recording (guitar silent), then plays track 1 alone (the app listens) and track 2 alone (you listen). Run 2 turns edit mode on with 0x04 and records 8 mid bursts into the same recording while you strum a muted chord with each burst, then plays the two tracks alone again. Pass if the guitar lands on track 1, the app on track 2, and both passes stay on track 2. Then the pedal workflow can keep these sources for good: guitar passes on track 1, the app’s chords and drums on track 2.',
-  acts:[['Run 1',runTwo1],['Run 2',runTwo2]],
-  qs:[['Run 1: track 2 alone held',['Low bursts','Nothing','Something else']],['Run 2: track 2 alone held',['Low and mid bursts','Only mid bursts','Only low bursts','Nothing']],['Run 2: track 1 alone held',['Your strums only','Strums and bursts','Nothing']]],
-  av:a=>{ const P=S.diag.p2t; if(P&&P.n1>=4) return 'fail'; return [0,1,2].some(i=>a(i)==null)?null:a(0)===0&&a(1)===0&&a(2)===0?'pass':a(0)===0&&a(2)===0?'warn':'fail'; }},
- {id:'chMon',t:'What sets the number of output channels',nomidi:true,how:'You try things, about 2 minutes. All afternoon on 24 Oct the phone offered 1 output channel (mono into the TP-7). It offered 6 once, right after GarageBand had been opened for the Bluetooth test. With 4 or more, the app can play in stereo and send the drums to a third track. Tap Run; it watches for 2 minutes and logs every change. Meanwhile: 1. unplug the TP-7 and plug it back in, wait 10 s; 2. open GarageBand, start an Audio Recorder song with the TP-7 connected, then switch back to MIDIWeb. Answer what changed the count.',
-  acts:[['Run',runChMon]],qs:[['What changed the channel count?',['Replugging the TP-7','Opening GarageBand','Something else (note it)','Nothing changed it']]]}
+);
+// build 48. 15:47 report: with sources line 1 + USB 1, USB 1 lands on track 2 and line 1 on track 1. A pass in edit mode put the
+// strums on track 1 but replaced track 2's earlier bursts. Either the TP-7 was set to overwrite, or it overwrites every recorded track
+// except the selected one. Test 6 now has you set dub by hand first and adds a third pass to tell these apart.
+async function runRemotePrep(id){
+  const e=tp7Ready(); if(e) return e; const r=await tpSetEdit(true);
+  const st=r.after==null?'0x0b gave no answer, so the state is unknown':r.after===0xff?'0x0b still reads ff, so edit mode may be off':`0x0b now reads ${hx([r.after])}`;
+  dgExtra(id,[...((S.diag.extra||{})[id]||[]).filter(x=>!/^Prepared from the app/.test(x)),`Prepared from the app: ${r.sent?'sent 0x04 (edit mode toggle)':'edit mode was already on (0x0b), nothing sent'}; ${st}.`]);
+  return r.after===0xff?'Edit mode did not come on: turn it on by hand.':`Edit mode ${r.sent?'turned on':'was already on'}. Now set the TP-7 to dub by hand, then go on.`;
+}
+const two=()=>S.diag.p2t;
+async function twoListen(beat){ const c1=await p4Listen('tTwo',8*beat+0.5,{solo:1,say:'Playing track 1 alone and listening…'}); await sleep(400);
+  await p4Listen('tTwo',8*beat+0.5,{solo:2,say:'Playing track 2 alone: listen…'}); return c1; }
+async function runTwo1(){
+  const e=await p4Need(); if(e) return e; const beat=60/S.bpm, ed=await tpSetEdit(false);
+  await p4Pass('tTwo',P4.F.x1,'Run 1: low bursts from the app on USB 1; keep the guitar silent',{beats:8});
+  const f1=await tpFileNow(); S.diag.p2t={bpm:S.bpm,f1}; save(); const c1=await twoListen(beat), P=two();
+  const n=c1?toneScan(c1,[P4.F.x1])[0].on.length:null; P.pk1=c1?peakDb(c1):null; P.n1=n;
+  P.L=[`Run 1 made the new recording ${fileTxt(f1)}${ed.sent?' (edit mode was on, so the app turned it off first)':''}.`,
+    c1?`Track 1 over USB: peak ${P.pk1.toFixed(1)} dBFS, ${n} low bursts${n>=4?': USB 1 went to track 1, not a track of its own':''}.`:'No audio input, so track 1 was not checked.'];
+  save(); verdict('tTwo','info',P.L); return 'Answer what track 2 held. Then tap Edit mode on.';
+}
+async function runTwoEdit(){
+  const e=tp7Ready(); if(e) return e; const r=await tpSetEdit(true);
+  return r.after===0xff?'Edit mode did not come on (0x0b still reads ff): turn it on by hand.':`Edit mode ${r.sent?'turned on':'was already on'}. Now set the TP-7 to dub (overdub) by hand, then Run 2.`;
+}
+async function twoPass(tag,f,say,key){
+  const e=await p4Need(); if(e) return e; const P=two(); if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm); const beat=60/S.bpm;
+  if((await tpEditRead())===0xff) return 'Edit mode is off. Tap Edit mode on, set dub by hand, then try again.';
+  await p4Pass('tTwo',f,say,{beats:8}); const fb=await tpFileNow(), same=sameFile(P.f1,fb), c1=await twoListen(beat), pk=c1?peakDb(c1):null; P[key]=pk;
+  P.L.push(`${tag}: file after: ${fileTxt(fb)}${same===false?', a new recording, so edit mode was not on':same?', the same recording':''}.`);
+  if(c1) P.L.push(`${tag}, track 1 over USB: peak ${pk.toFixed(1)} dBFS (Run 1: ${P.pk1!=null?P.pk1.toFixed(1):'?'} dBFS).`);
+  return '';
+}
+async function runTwo2(){ const r=await twoPass('Run 2',P4.F.x2,'Run 2: mid bursts on USB 1. Strum a muted chord with every mid burst','pk2'); if(r) return r;
+  save(); verdict('tTwo','info',two().L); return 'Answer the two Run 2 questions, then Run 3.'; }
+async function runTwo3(){ const r=await twoPass('Run 3',P4.F.x3,'Run 3: high bursts on USB 1. Keep the guitar silent','pk3'); if(r) return r; const P=two();
+  if(P.pk3!=null&&P.pk1!=null&&P.pk2!=null) P.L.push(P.pk2<P.pk1+15?'Run 2 did not raise track 1 much over Run 1, so the app cannot tell whether your strums survived Run 3; your answer decides.':P.pk3>(P.pk1+P.pk2)/2?'Track 1 still holds your strums after a silent guitar pass: the selected track overdubs.':'Track 1 fell back to silence after a silent guitar pass: track 1 was overwritten.');
+  save(); verdict('tTwo','info',P.L); return 'Answer the two Run 3 questions.'; }
+function twoVerdict(a){
+  const P=two(); if(P&&P.n1>=4) return 'fail'; if([0,1,2].some(i=>a(i)==null)) return null;
+  if(a(1)===1) return 'fail'; if(a(0)!==0||a(1)!==0||a(2)!==0) return 'warn';
+  if(a(3)==null||a(4)==null) return null; return a(3)===0&&a(4)===0?'pass':'warn';
+}
+
+// test 7, second part: can the app itself get more output channels? Each try opens a short-lived audio context after changing the session type.
+async function runChTry(){
+  initAudio(); if(!ctx) return 'No audio.'; const AS=navigator.audioSession, keep=AS?AS.type:null, L=[`Start: the app's audio offers ${ctx.destination.maxChannelCount} output channel${ctx.destination.maxChannelCount>1?'s':''}; audio session ${AS?keep:'not available'}.`];
+  const C=S.diag.chm||(S.diag.chm={}); const show=()=>{ C.tr=L; save(); dgExtra('chMon',[...(C.mon||[]),...L]); };
+  const tryCtx=async(label,opts)=>{ setDs('chMon',`Trying: ${label}…`); try{ const c=new AudioContext(opts||{}); try{ await c.resume(); }catch(e){} await sleep(500);
+      L.push(`${label}: a new audio context offers ${c.destination.maxChannelCount} at ${c.sampleRate/1000} kHz; the app's own audio offers ${ctx.destination.maxChannelCount}.`); await c.close(); }
+    catch(e){ L.push(`${label}: failed (${e.name}).`); } show(); };
+  for(const t of ['playback','play-and-record','auto']){ if(AS){ try{ AS.type=t; }catch(e){} await sleep(700); } await tryCtx(`Session ${t}`); }
+  await tryCtx('A 96 kHz context',{sampleRate:96000});
+  if(AS){ try{ AS.type=keep||'playback'; }catch(e){} }
+  const start=+/offers (\d+)/.exec(L[0])[1], after=ctx.destination.maxChannelCount, gotNew=L.slice(1).some(x=>/context offers ([4-9]|\d\d) at/.test(x)), more=start<4&&(gotNew||after>=4);
+  L.push(start>=4?'The phone already offered 4 or more, so this proves nothing: unplug and replug the TP-7 first, then Run again.':more?'One of these got more channels: the app can do it itself.':'None of these got more channels: opening GarageBand stays the way.'); show();
+  verdict('chMon','info',[...(C.mon||[]),...L]); return more?'The app got more channels itself.':'No luck from the app.';
+}
+DIAG.push(
+ {id:'tTwo',t:'Guitar and app on separate tracks',how:'You play and listen, about 5 minutes. The everyday setup, set once by hand: input mode manual, record sources line 1 and USB 1, guitar in line 1. Works with 1 output channel. Run 1 turns edit mode off, records 8 low bursts from the app as a new recording, then plays track 1 alone (the app listens) and track 2 alone (you listen); on 24 Oct the bursts landed on track 2. Then tap Edit mode on and set the TP-7 to dub by hand (the record combination that shows dub or write). Run 2 records mid bursts while you strum a muted chord with each one. Run 3 records high bursts with the guitar silent. After each run the app plays both tracks alone. On 24 Oct track 2 lost its first bursts in a pass like Run 2: this shows whether the TP-7 was set to write, or whether it overwrites every track except the selected one. Only the first allows guitar on track 1 and the app on track 2 with the sources set once.',
+  acts:[['Run 1',runTwo1],['Edit mode on',runTwoEdit],['Run 2',runTwo2],['Run 3',runTwo3]],
+  qs:[['Run 1: track 2 alone held',['Low bursts','Nothing','Something else']],['Run 2: track 2 alone held',['Low and mid bursts','Only mid bursts','Only low bursts','Nothing']],['Run 2: track 1 alone held',['Your strums only','Strums and bursts','Nothing']],
+    ['Run 3: track 2 alone held',['Low, mid and high bursts','Mid and high only','Only high bursts','Something else']],['Run 3: track 1 alone held',['Your strums from Run 2','Nothing','Something else']]],
+  av:twoVerdict},
+ {id:'chMon',t:'More output channels from the app',nomidi:true,how:'About 1 minute. Settled on 24 Oct: opening GarageBand switched the phone from 1 to 6 output channels. Run checks whether the app can do the same itself: it tries three audio session types and a 96 kHz audio context and logs the channel count each time. Start from 1 channel: unplug and replug the TP-7 first (MIDI now reconnects by itself). If nothing works, the way stays: open GarageBand once after connecting the TP-7. Watch logs the count for 2 minutes if you want to try other things.',
+  acts:[['Run',runChTry],['Watch 2 minutes',runChMon]],qs:[]}
+);
+/* build 49 */
+// test 2 (build 49): guitar loops go straight to the TP-7. Can the TP-7 itself layer a loop? Edit mode with dub, bars 1–2 looping
+// (CC 17 in/out during playback), arm while it loops (arming during playback punched in on 24 Oct), record across two loop wraps, disarm.
+async function runLoopBase(){
+  const e=await p4Need(); if(e) return e; await tpSetEdit(false);
+  await p4Pass('tLoopDub',P4.F.p1,'Base: 4 bars of low bursts as a new recording',{beats:16});
+  const f1=await tpFileNow(); S.diag.ldub={bpm:S.bpm,f1}; save(); if(S.diag.res) delete S.diag.res.tLoopDub;
+  const ed=await tpSetEdit(true); dgExtra('tLoopDub',[`Base: ${fileTxt(f1)}, low bursts on every beat of bars 1 to 4.`]);
+  return ed.after===0xff?'Base recorded, but edit mode did not come on: turn it on by hand, set dub, then Run 2.':'Base recorded and edit mode on. Set the TP-7 to dub by hand, then Run 2.';
+}
+async function runLoopDub(){
+  const e=await p4Need(); if(e) return e; const P=S.diag.ldub; if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
+  if((await tpEditRead())===0xff) return 'Edit mode is off. Run 1 turns it on; then set dub and Run 2.';
+  const beat=60/S.bpm, bar=4*beat, md=(S.tp.mDelay||0)/1000;
+  if(!(await tpEnsureStart('tLoopDub'))) return 'The tape did not go back to the start.';
+  const T=ctx.currentTime+1.4, C2=T+2*bar, C3=T+4*bar, E=T+6*bar;
+  setDs('tLoopDub','Looping bars 1 and 2. Recording starts the second time round: mid bursts, then high bursts the third time. Watch the TP-7…');
+  midiSend(sxMsg(SXOP.session),T-0.25); midiSend(sxMsg(SXOP.play),T);
+  midiSend([0xB0,17,1],T+0.05); midiSend([0xB0,17,2],T+2*bar-md);
+  midiSend([0xB0,14,127],C2+0.15);
+  for(let i=1;i<8;i++){ burst(C2+i*beat,P4.F.p2); burst(C3+i*beat,P4.F.p3); }
+  midiSend([0xB0,14,0],E-0.15); midiSend(sxMsg(SXOP.stop),E+0.1);
+  await sleep((E-ctx.currentTime)*1000+1500);
+  const fb=await tpFileNow(), cap=await p4Listen('tLoopDub',6*bar+1,{loopOff:true,say:'Playing the recording back with the loop off and listening…'});
+  const L=[`Base: ${fileTxt(P.f1)}. After Run 2: ${fileTxt(fb)}${sameFile(P.f1,fb)===false?', a new recording, so edit mode was not on':''}.`];
+  if(!cap){ L.push('No audio input, so the result was not checked.'); verdict('tLoopDub','info',L); return 'Could not listen.'; }
+  const sc=toneScan(cap,[P4.F.p1,P4.F.p2,P4.F.p3]), g=gridFit(sc[0].on,beat);
+  if(!g){ verdict('tLoopDub','fail',[...L,'The base was not heard on playback.',SRC_HINT()]); return 'The base was not heard.'; }
+  const mid=onGrid(g,sc[1].on), hi=onGrid(g,sc[2].on), in12=m=>m.filter(x=>x.k>=0&&x.k<8).length, after=m=>m.filter(x=>x.k>=8).length;
+  L.push(`Mid bursts (second time round): ${mid.length}, in bar ${barsOf(mid)}. High bursts (third time round): ${hi.length}, in bar ${barsOf(hi)}.`);
+  const layered=in12(mid)>=4&&in12(hi)>=4, linear=after(mid)+after(hi)>=4, once=in12(mid)>=4&&in12(hi)<2;
+  P.res=layered?'layer':linear?'linear':once?'once':'none'; save();
+  L.push(layered?'Both loop passes landed in bars 1 and 2: the TP-7 keeps looping while it records, so it can layer a guitar loop by itself while you hold the pedal.'
+    :linear?'The recording ran on past bar 2: the TP-7 stops looping once it records, so each layer has to be its own pass from the loop start.'
+    :once?'Only the first loop pass was recorded: recording stopped at the loop point.'
+    :'Nothing new was recorded while the TP-7 looped.');
+  verdict('tLoopDub',layered?'pass':once?'warn':'info',L); return L[L.length-1];
+}
+DIAG.push(
+ {id:'tLoopDub',t:'Layer a loop on the TP-7 itself',how:'Automatic, about 2 minutes. Record sources USB 1 only, so the app can hear the result. Your guitar loops go straight to the TP-7, so this checks whether the TP-7 can act as the looper. Run 1 records 4 bars of low bursts as a new recording and turns edit mode on; then set the TP-7 to dub by hand. Run 2 loops bars 1 and 2 (TP-7 loop points by MIDI), arms on the second time round and stays armed for two loop passes (mid bursts, then high bursts), then disarms. It plays the recording back with the loop off. If both passes land in bars 1 and 2, holding a pedal can layer a loop on the TP-7 the way a looper does. If they run on into bars 3 to 6, the TP-7 stops looping while it records, and each layer has to be its own pass from the loop start.',
+  acts:[['Run 1',runLoopBase],['Run 2',runLoopDub]],qs:[['While Run 2 recorded, what did the TP-7 do?',['Kept looping bars 1 and 2','Stopped looping and played on','Stopped playing','Not sure']]]}
 );
 const DIAG_PLAN=[
-  ['Part 1: setup and this phone',['setup','sys']],
-  ['Part 2: timing. On the TP-7: record sources USB 1 only, MIDI setting cue, stopped, cue utility off',['tStart','tFull','lLat']],
-  ['Part 3: one recording, separate tracks. MIDI setting cue; each test says which record sources',['tTwo','chMon','tFixed']],
-  ['Part 4 (optional): find overwrite from the app. Record sources USB 1 only',['seqOver']]
+  ['Part 1: does a pass keep the other track? Record sources line 1 and USB 1, MIDI setting cue',['tTwo']],
+  ['Part 2: can the TP-7 layer a loop itself? Record sources USB 1 only',['tLoopDub']],
+  ['Part 3, only for drums on their own track or stereo: 6 output channels',['chMon','tStart','tFixed']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -3258,7 +3243,7 @@ function updReport(){ clearTimeout(updReport.t); updReport.t=setTimeout(()=>{ co
 function renderDiag(){
   const el=$('#dgIn'); if(!el) return; const D=S.diag, how=t=>typeof t.how==='function'?t.how():t.how;
   el.innerHTML=`<div class="rv-head"><h2 id="dgTitle">TP-7 diagnostics <small style="font-weight:500;color:var(--ink-2);font-size:13px">build ${APP_BUILD}</small></h2><button type="button" class="btn" data-dact="close">Close</button></div>
-  <p class="note">Everything runs on this screen. Connect the TP-7 by USB-C, tap Connect MIDI in the TP-7 tab (allow SysEx), and set the TP-7 MIDI setting to cue. Run the tests from top to bottom: each one ends with Pass, Check, Fail or Noted. Set the TP-7 record sources to USB 1 only, so the app can hear its own sound come back; Part 3 asks for other sources. Part 3 checks which TP-7 track each source lands on; Part 4 is optional. Parts 2 to 4 leave short test recordings on the TP-7, which you can delete afterwards. Then copy the report and paste it into our chat.</p>
+  <p class="note">Everything runs on this screen. Connect the TP-7 by USB-C, tap Connect MIDI in the TP-7 tab (allow SysEx), and set the TP-7 MIDI setting to cue. Run the tests from top to bottom: each one ends with Pass, Check, Fail or Noted. Only the open questions are left; everything settled is built into the app. Each part says which record sources it needs. The tests leave short recordings on the TP-7, which you can delete afterwards. Then copy the report and paste it into our chat.</p>
   <div class="orow"><button type="button" class="btn" data-dact="fresh">Start a fresh round</button></div>
   <h3>Your TP-7</h3>
   <label class="dg-l">Firmware version<input class="dg-in" data-df="fw" value="${esc(D.fw)}" placeholder="For example 1.1.11"></label>
@@ -3287,7 +3272,7 @@ function bindDiag(){
     const b=e.target.closest('[data-dact]'); if(!b) return; const a=b.dataset.dact;
     if(a==='close'){ root.hidden=true; return; }
     if(a==='copy'){ const txt=diagReport(), ta=$('#dgReport'); ta.value=txt; try{ await navigator.clipboard.writeText(txt); toast('Report copied.'); }catch(err){ ta.focus(); ta.select(); toast('Select all the text in the box and copy it.'); } return; }
-    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.sx={}; D.p4=null; D.p4f=null; D.sxmap=null; D.sxw=null; D.sxs=null; D.seqE=null; D.seqO=null; D.rw4a=null; D.st=null; D.s3d=null; D.p2t=null; D.res_u3=null; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
+    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.sx={}; D.p4=null; D.p4f=null; D.sxmap=null; D.sxw=null; D.sxs=null; D.seqE=null; D.seqO=null; D.rw4a=null; D.st=null; D.s3d=null; D.p2t=null; D.chm=null; D.ldub=null; D.res_u3=null; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
     if(a==='applyMD'){ if(S.diag.mdKind==='take'){ S.tp.takeCueDelay=+b.dataset.v; toast(`Delay for markers set during takes: ${S.tp.takeCueDelay} ms.`); } else { S.tp.mDelay=+b.dataset.v; toast(`Marker pass delay set to ${S.tp.mDelay} ms.`); } S.diag.mdSug=null; save(); renderDiag(); return; }
     if(a==='applyLat'){ S.looper.lat=+b.dataset.v/1000; S.looper.latHow='corrected by the diagnostics'; S.diag.latSug=null; save(); renderDiag(); toast(`Looper latency set to ${b.dataset.v} ms.`); return; }
     if(a==='apply'){ S.diag.tStartSug=null; setOffset(+b.dataset.v); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms for ${offKey()}.`); return; }
@@ -3794,6 +3779,7 @@ function bindGlobal(){
   });
   document.addEventListener('pointerdown',()=>{ if(ctx&&ctx.state!=='running') ctx.resume().catch(()=>{}); },true);
   document.addEventListener('pointerdown',e=>{ if(e.target.closest&&e.target.closest('.tapout')){ e.preventDefault(); tapTempo(); } });
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&R.midi&&!nativeMidi()&&!R.dgBusy) setTimeout(()=>{ if(!R.dgBusy) tpAlive().catch(()=>{}); },800); });
   document.addEventListener('visibilitychange',()=>{ if(!document.hidden&&ctx&&ctx.state!=='running') ctx.resume().catch(()=>{}); if(!document.hidden&&R.playing) requestWake(); });
   $('#startBtn').addEventListener('click',()=>{ initAudio(); $('#start').hidden=true; });
 }
