@@ -1147,10 +1147,10 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='52 (25 Oct 2026)';
+const APP_BUILD='54 (25 Oct 2026)';
 // 24 Oct: 0x04 toggles edit mode (no reply), 0x4a goes to the start (also in edit mode, where stop does not rewind), 0x3e calibrates the reel
 const SXOP={session:0x40,play:0x50,stop:0x51,edit:0x04,start:0x4a}; let sxId=0;
-const SXN={0x40:'Start Session',0x50:'Play',0x51:'Stop',0x04:'Edit mode toggle',0x4a:'Go to start',0x3e:'Reel calibration',0x0b:'Read edit mode',0x0c:'Read 0x0c',0x3d:'0x3d (self-test)'}, sxSent={};
+const SXN={0x40:'Start Session',0x50:'Play',0x51:'Stop',0x04:'Edit mode toggle',0x4a:'Go to start',0x3e:'Reel calibration',0x0b:'Read edit track',0x0c:'Read 0x0c',0x3d:'0x3d (self-test; never sent: the TP-7 froze after it on 25 Oct)'}, sxSent={};
 /* TP-7 SysEx, decoded (14 Oct): replies echo the request id with 0x20 instead of 0x60 and carry [status, key, value];
    notices have 0x40 and id 0: N = transport flag, M = a number (ms?), K = current file. Payload is packed 8 bytes to 7. */
 const hx=d=>[...d].map(x=>x.toString(16).padStart(2,'0')).join(' ');
@@ -2913,48 +2913,6 @@ async function runLoopBase(){
 }
 
 /* build 52 */
-// build 52. 25 Oct: turning edit mode on (0x04) made the TP-7 show line 1 as its source, so USB 1 was not recorded in edit mode
-// (step 1 normal mode recorded; steps 2–5 in edit mode did not). 0x3d + 0 to 5 left the normal record sources alone. Earlier, in edit
-// mode, 0x3d + 1 switched to the mic input and a 0x3d sequence switched to line 1: 0x3d may choose the input for edit mode.
-const EIV=[0,1,2,3,4,5], EIF=[P4.F.p2,P4.F.p3,P4.F.p4,P4.F.A,P4.F.B,P4.F.C], EIT=[0,1,2];
-const EIOPT=['Line 1','Mic','USB 1','USB 2','USB 3','Nothing changed','Something else (note it)'];
-const eiM=()=>S.diag.edIn;
-function eiVerdict(){
-  const M=eiM(); if(!M) return; const ans=S.diag.ans||{}, L=[M.l0];
-  EIV.forEach(v=>{ const r=M.res[v]; if(r) L.push(r.txt); });
-  EIT.forEach(v=>{ const t=(M.tr||{})[v]; if(t) L.push(t); }); if(M.hand) L.push(M.hand);
-  const usb=EIV.filter(v=>M.res[v]&&M.res[v].n>=4), line=EIV.filter(v=>ans['edIn:'+v]===0), tracks=EIT.filter(v=>(M.tr||{})[v]&&M.trb&&M.trb[v]!=null&&M.trb[v]!==0&&M.trb[v]!==0xff);
-  M.usb=usb.length?usb[0]:null; M.line=line.length?line[0]:null; save();
-  if(usb.length) L.push(`In edit mode, 0x3d + ${usb.join(' and + ')} made the TP-7 record USB 1: the app can switch edit mode to its own input.`);
-  else if(EIV.every(v=>M.res[v])) L.push('No 0x3d value made edit mode record USB 1.');
-  if(line.length) L.push(`0x3d + ${line.join(', + ')} showed line 1: the app can switch edit mode back to the guitar.`);
-  if(tracks.length) L.push(`0x03 + ${tracks.join(', + ')} changed what 0x0b reads, so 0x03 may select the track.`);
-  verdict('edIn',usb.length?'pass':'info',L);
-}
-async function runEiBase(){
-  const e=await p4Need(); if(e) return e; await tpSetEdit(false);
-  await p4Pass('edIn',P4.F.p1,'Base: low bursts from USB 1 as a new recording',{beats:8});
-  const f1=await tpFileNow(), ed=await tpSetEdit(true);
-  S.diag.edIn={bpm:S.bpm,f1,res:{},tr:{},trb:{},l0:`Base: ${fileTxt(f1)} (low bursts from USB 1, normal mode). Edit mode ${ed.after===0xff?'did not come on':'on'} (0x0b ${ed.after==null?'?':hx([ed.after])}).`};
-  save(); eiVerdict(); return 'Base recorded and edit mode on. Note the source the TP-7 shows, then tap 0x3d + 0.';
-}
-async function runEi(v){
-  const e=await p4Need(); if(e) return e; const M=eiM(); if(!M) return 'Run Base first.'; if(M.bpm!==S.bpm) setBpm(M.bpm); const beat=60/S.bpm;
-  const ed=await tpSetEdit(true); if(ed.after===0xff) return 'Edit mode did not come on (0x0b still reads ff).';
-  setDs('edIn',`Sending 0x3d + ${v}…`); const r=await sxAsk(0x7F,[0x3d,v],1500); await sleep(1000);
-  await p4Pass('edIn',EIF[v],`0x3d + ${v}, then 8 bursts from USB 1; guitar silent`,{beats:8});
-  const fb=await tpFileNow(), cap=await p4Listen('edIn',8*beat+0.5,{say:'Playing it back and listening…'}), n=cap?toneScan(cap,[P4.F.p1,EIF[v]])[1].on.length:null; // scan with the base, so a pitch must reach 8 % of the base level to count
-  M.res[v]={n,txt:`0x3d + ${v} (reply ${r.resp?(r.resp.st?'status '+r.resp.st:'ok'):'none'}): USB 1 ${n==null?'not checked':n>=4?`recorded (${n} bursts heard)`:`not recorded (${n} heard)`}${sameFile(M.f1,fb)===false?'; a new recording, so edit mode was off':''}.`};
-  save(); eiVerdict(); return `USB 1 ${n==null?'not checked':n>=4?'recorded':'not recorded'}. Answer what source the TP-7 shows.`;
-}
-async function runEiTrack(v){
-  const e=tp7Ready(); if(e) return e; const M=eiM(); if(!M) return 'Run Base first.';
-  await tpSetEdit(true); const a=await tpEditRead(), r=await sxAsk(0x7F,[0x03,v],1500); await sleep(700); const b=await tpEditRead();
-  M.trb[v]=b; M.tr[v]=`0x03 + ${v} in edit mode: reply ${r.resp?(r.resp.st?'status '+r.resp.st:'ok'):'none'}; 0x0b ${a==null?'?':hx([a])} before, ${b==null?'?':hx([b])} after.`; save(); eiVerdict();
-  return `0x0b ${a==null?'?':hx([a])} → ${b==null?'?':hx([b])}. Answer which track the TP-7 shows.`;
-}
-async function runEiHand(){ const e=tp7Ready(); if(e) return e; const M=eiM(); if(!M) return 'Run Base first.'; const b=await tpEditRead();
-  M.hand=`With track 2 selected by hand: 0x0b reads ${b==null?'nothing':hx([b])} (00 with track 1).`; save(); eiVerdict(); return M.hand; }
 
 // test 2 (guitar version): edit mode records line 1, which is what a guitar loop needs. Loop bars 1–2, arm on the second time round,
 // you strum on every beat once round, then let one open chord ring the next time round. If the file does not grow and bars 1–2 hold both,
@@ -2964,7 +2922,6 @@ const dbOf=x=>20*Math.log10(x||1e-9);
 async function runLoopDub(){
   const e=await p4Need(); if(e) return e; const P=S.diag.ldub; if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm);
   const ed=await tpSetEdit(true); if(ed.after===0xff) return 'Edit mode did not come on (0x0b still reads ff). Check the TP-7, then Run 2 again.';
-  const M=eiM(); if(M&&M.line!=null){ mNow(sxReq(0x7F,[0x3d,M.line]).bytes); await sleep(800); }
   const beat=60/S.bpm, bar=4*beat, md=(S.tp.mDelay||0)/1000;
   if(!(await tpEnsureStart('tLoopDub'))) return 'The tape did not go back to the start.';
   const T=ctx.currentTime+1.4, C2=T+2*bar, C3=T+4*bar, E=T+6*bar, at=(t,msg)=>setTimeout(()=>setDs('tLoopDub',msg),Math.max(0,(t-ctx.currentTime)*1000));
@@ -2983,18 +2940,145 @@ async function runLoopDub(){
   P.grew=grew; save(); verdict('tLoopDub','info',L); return 'Answer the two questions.';
 }
 DIAG.push(
- {id:'edIn',t:'Can the app choose the input for edit mode?',how:'You watch, about 6 minutes. Record sources USB 1 only, guitar silent. On 25 Oct, turning edit mode on made the TP-7 show line 1 as its source, so the app’s passes were not recorded; 0x3d did not change the normal record sources. In edit mode, though, 0x3d + 1 once switched the input to the mic and a 0x3d sequence switched it to line 1, so 0x3d may pick the input for edit mode. Base records low bursts as a new recording and turns edit mode on. Each 0x3d button sends that value in edit mode, records 8 bursts from USB 1 and plays them back: the app hears whether USB 1 was recorded, and you note the source the TP-7 shows. The 0x03 buttons send 0x03 with a value in edit mode and read 0x0b (00 in edit mode so far): say which track the TP-7 shows. Last, select track 2 by hand and tap Read: if 0x0b changes, the app can read the selected track.',
-  acts:[['Base',runEiBase],...EIV.map(v=>[`0x3d + ${v}`,()=>runEi(v)]),...EIT.map(v=>[`0x03 + ${v}`,()=>runEiTrack(v)]),['Read (track 2 by hand)',runEiHand]],
-  qs:[...EIV.map(v=>[`After 0x3d + ${v}, the TP-7 showed the source as`,EIOPT]),...EIT.map(v=>[`After 0x03 + ${v}, the TP-7 showed`,['Track 1','Track 2','Track 3','No track','Something else (note it)']])]},
- {id:'tLoopDub',t:'Record a guitar loop on the TP-7 itself',how:'You play, about 3 minutes. Record sources USB 1 only for Run 1; guitar in line 1. Edit mode records line 1, which is what a guitar loop needs. On 24 and 25 Oct the TP-7 kept looping bars 1 and 2 while armed, and the recording did not grow, but nothing could be heard because the passes came from USB 1. Run 1 records 4 bars of low bursts as a new recording and turns edit mode on. Run 2 loops bars 1 and 2 (the loop points now land on the bar lines), arms the second time round and stays armed for two times round. Follow the status line: strum a muted chord on every beat the first time round, then strum one open chord and let it ring the second time round. It plays the recording back with the loop off.',
+ {id:'tLoopDub',t:'Record a guitar loop on the TP-7 itself',how:'You play, about 3 minutes. Record sources USB 1 only for Run 1; guitar in line 1. Edit mode records line 1, which is what a guitar loop needs. On 24 and 25 Oct the TP-7 kept looping bars 1 and 2 while armed, and the recording did not grow, but nothing could be heard because the passes came from USB 1. On 25 Oct (16:52) the TP-7 froze when Run 2 started, right after the app had sent 0x3d, a self-test command; the app no longer sends it. If the TP-7 freezes again, say so in the notes. Run 1 records 4 bars of low bursts as a new recording and turns edit mode on (input line 1, track 1). Run 2 loops bars 1 and 2 (the loop points now land on the bar lines), arms the second time round and stays armed for two times round. Follow the status line: strum a muted chord on every beat the first time round, then strum one open chord and let it ring the second time round. It plays the recording back with the loop off.',
   acts:[['Run 1',runLoopBase],['Run 2',runLoopDub]],
   qs:[['While armed, did the TP-7 keep looping bars 1 and 2?',['Yes','No, it played on','It stopped','Not sure']],['On playback, bars 1 and 2 held',['The strums and the ringing chord','Only the strums','Only the ringing chord','Neither']]],
   av:a=>a(1)==null?null:a(1)===0&&!(S.diag.ldub||{}).grew?'pass':a(1)===3?'fail':'warn'}
 );
+/* build 53 */
+// build 53. 25 Oct, 16:52: 0x3d chose no input in edit mode (only + 0 flashed "line 1") and 0x03 selected no track. In edit mode each
+// track has its own input, set by hand: record, + to the track, record, then turn the platter (user). 0x0b reads the selected track:
+// ff = not in edit mode, 00 = track 1, 01 = track 2. Test 1: with the inputs set once by hand, does a pass record every track that
+// has an input, or only the selected one, and do the other tracks survive?
+const tsM=()=>S.diag.ts;
+const trTxt=v=>v==null?'unknown':v===0xff?'not in edit mode':`track ${v+1} selected`;
+async function tsListen(beat){ const c1=await p4Listen('tSetup',8*beat+0.5,{solo:1,say:'Playing track 1 alone and listening…'}); await sleep(400);
+  await p4Listen('tSetup',8*beat+0.5,{solo:2,say:'Playing track 2 alone: listen…'}); return c1; }
+async function runTs1(){
+  const e=await p4Need(); if(e) return e; const beat=60/S.bpm; await tpSetEdit(false);
+  await p4Pass('tSetup',P4.F.x1,'Run 1: low bursts from the app on USB 1; keep the guitar silent',{beats:8});
+  const f1=await tpFileNow(), c1=await tsListen(beat), ed=await tpSetEdit(true), tr=await tpEditRead();
+  S.diag.ts={bpm:S.bpm,f1,pk1:c1?peakDb(c1):null,L:[`Run 1 made the new recording ${fileTxt(f1)}; track 1 over USB peaks at ${c1?peakDb(c1).toFixed(1):'?'} dBFS. Edit mode then on, ${trTxt(tr)}.`]}; save();
+  verdict('tSetup','info',tsM().L);
+  return 'Now by hand, once: give track 1 the input line 1 and track 2 the input USB 1 (record, + to track 2, record, turn the platter), then select track 1 again (record, −, record). Then Run 2.';
+}
+async function tsRun(tag,f,say,key,want){
+  const e=await p4Need(); if(e) return e; const P=tsM(); if(!P) return 'Run 1 first.'; if(P.bpm!==S.bpm) setBpm(P.bpm); const beat=60/S.bpm;
+  const tr=await tpEditRead(); if(tr===0xff) return 'Edit mode is off. Turn it on by hand (or Run 1 again), then retry.';
+  if(want!=null&&tr!=null&&tr!==want) return `The TP-7 has ${trTxt(tr)}; select track ${want+1} by hand first (record, + or −, record), then retry.`;
+  await p4Pass('tSetup',f,say,f?{beats:8}:{beats:8,freqs:[]});
+  const fb=await tpFileNow(), same=sameFile(P.f1,fb), c1=await tsListen(beat), pk=c1?peakDb(c1):null; P[key]=pk;
+  P.L.push(`${tag} (${trTxt(tr)}): file after ${fileTxt(fb)}${same===false?', a new recording, so edit mode was off':same?', the same recording':''}; track 1 over USB peaks at ${pk==null?'?':pk.toFixed(1)} dBFS.`);
+  save(); verdict('tSetup','info',P.L); return '';
+}
+async function runTs2(){ const r=await tsRun('Run 2',0,'Run 2: the app stays silent. Strum a muted chord with each low burst you hear from the TP-7','pk2',0); return r||'Answer the two Run 2 questions, then Run 3.'; }
+async function runTs3(){ const r=await tsRun('Run 3',P4.F.x2,'Run 3: mid bursts from the app; keep the guitar silent','pk3',0); return r||'Answer the two Run 3 questions. Then select track 2 by hand (record, +, record) and Run 4.'; }
+async function runTs4(){ const r=await tsRun('Run 4',P4.F.x3,'Run 4: high bursts from the app with track 2 selected; keep the guitar silent','pk4',1); return r||'Answer the two Run 4 questions.'; }
+function tsVerdict(a){
+  if([0,1,2,3,4].some(i=>a(i)==null)) return null;
+  if(a(1)!==0||a(4)!==0) return 'fail';               // a pass erased the other track
+  if(a(3)===0) return 'pass';                          // track 2 recorded with track 1 selected: inputs set once per song are enough
+  if(a(3)===1) return a(5)==null?null:a(5)<=1?'warn':'fail'; // only the selected track records: the track must be switched per pass
+  return 'warn';
+}
+DIAG.push(
+ {id:'tSetup',t:'Inputs set once per track: what does a pass record?',how:'You play, set up once and listen, about 7 minutes. Record sources line 1 and USB 1, guitar in line 1. On 25 Oct the app found no command for the edit-mode input or the track: you set them on the TP-7 (record, + or − to the track, record, turn the platter), and the app reads the selected track (0x0b). Run 1 records low bursts from the app as a new recording and turns edit mode on. Then, once by hand: track 1 input line 1, track 2 input USB 1, track 1 selected again. Run 2: the app is silent while you strum. Run 3: the app plays mid bursts while the guitar is silent. Before Run 4, select track 2 by hand; Run 4: the app plays high bursts. After each run the app plays track 1 alone (it listens) and track 2 alone (you listen). Pass if, with track 1 selected, the app’s pass still lands on track 2 and nothing gets erased: then the inputs are set once per song and the app does the rest. If only the selected track records, the app’s passes need track 2 selected by hand.',
+  acts:[['Run 1',runTs1],['Run 2',runTs2],['Run 3',runTs3],['Run 4',runTs4]],
+  qs:[['Run 1: track 2 alone held',['Low bursts','Nothing','Something else']],['Run 2: track 2 alone held',['Still the low bursts','Nothing','Something else']],['Run 2: track 1 alone held',['Your strums','Nothing','Something else']],
+    ['Run 3: track 2 alone held',['Low and mid bursts','Only low bursts','Only mid bursts','Something else']],['Run 3: track 1 alone held',['Still your strums','Nothing','Something else']],
+    ['Run 4: track 2 alone held',['Low, mid and high bursts','Low and high bursts','Only high bursts','Something else']],['Run 4: track 1 alone held',['Still your strums','Nothing','Something else']]],
+  av:tsVerdict}
+);
+/* build 54 */
+// build 54: a thorough search for remote track and input selection in edit mode. Known: edit mode on/off (0x04); the selected track
+// reads from 0x0b (ff off, 00 track 1, 01 track 2); each track has its own input, set by hand (record, + or −, record, platter).
+// Three routes are left: A. the TP-7 may announce track and input changes as notices, like O (armed), M (position), K (file);
+// B. sub-commands that answered status 1 without a value may be setters that need one (status 1 also came back when 0x41, 0x4a and 0x55,
+// which exist, got a value they do not take); C. the button and wheel messages the TP-7 sends in ctrl mode (CC 20–27, CC 30,
+// github.com/lucidyan/tp7-midi) may work when sent to it.
+async function rd2(){ const v=r=>r.resp&&!r.resp.st&&r.resp.v.length>=2?r.resp.v[1]:null; const b=await sxAsk(0x7F,[0x0b],500), c=await sxAsk(0x7F,[0x0c],500); return {b:v(b),c:v(c)}; }
+const rdTx=x=>`0x0b ${x.b==null?'–':hx([x.b])}, 0x0c ${x.c==null?'–':hx([x.c])}`;
+function midiTxt(d){ if(d[0]===0xF0) return sxText(d); const st=d[0]&0xF0, ch=(d[0]&15)+1;
+  return st===0xB0?`CC ${d[1]} = ${d[2]} (ch ${ch})`:st===0x90?`note ${d[1]} on ${d[2]}`:st===0x80?`note ${d[1]} off`:st===0xE0?`pitch bend ${((d[2]<<7)|d[1])-8192}`:hx(d); }
+
+// A. watch what the TP-7 sends while you change track and input by hand
+const WATCH=[{label:'Select track 2',s:20,say:'select track 2 by hand (record, +, record).'},
+  {label:'Change track 2’s input',s:35,say:'turn the platter one step at a time through every input, a second on each, and end on USB 1.'},
+  {label:'Select track 1',s:20,say:'select track 1 again (record, −, record).'},
+  {label:'Change track 1’s input',s:35,say:'turn the platter through every input and end on line 1.'},
+  {label:'Anything else',s:30,say:'try anything else, and write in the notes what you did.'}];
+async function runWatch(i){
+  const e=tp7Ready(); if(e) return e; const W=WATCH[i], M=S.diag.tw||(S.diag.tw={});
+  if(i===0) await tpSetEdit(true);
+  const a=await rd2(); setDs('tWatch',`Watching for ${W.s} s. Now ${W.say}`);
+  const got=await capture('tWatch',W.s*1000), b=await rd2();
+  const seen=got.filter(m=>m.d[0]!==0xF8&&m.d[0]!==0xFE).map(m=>midiTxt(m.d)), pos=seen.filter(x=>/^position /.test(x)).length, rest=seen.filter(x=>!/^position /.test(x));
+  M[i]=`${W.label}: ${rest.length?rest.slice(0,40).join('; '):'no messages from the TP-7'}${pos?` (plus ${pos} position notices)`:''}. Before: ${rdTx(a)}; after: ${rdTx(b)}${a.b!==b.b?' (selected track changed)':''}${a.c!==b.c?' (0x0c changed)':''}.`; save();
+  verdict('tWatch','info',WATCH.map((x,j)=>M[j]).filter(Boolean)); return `${rest.length} messages${a.c!==b.c?', 0x0c changed':''}.`+(i<WATCH.length-1?` Next: ${WATCH[i+1].label}.`:'');
+}
+
+// C. button and wheel messages, first in the cue MIDI setting, then in ctrl
+const BSEQ=[['record, up, record',[22,20,22]],['record, right, record',[22,26,22]],['record, down, record',[22,21,22]],['record, left, record',[22,25,22]]];
+async function btnPress(cc){ mNow([0xB0,cc,127]); await sleep(120); mNow([0xB0,cc,0]); await sleep(350); }
+async function runBtn(mode){
+  const e=tp7Ready(); if(e) return e; const M=S.diag.tb||(S.diag.tb={});
+  if(!(await sxAlive())) return 'The TP-7 does not answer SysEx in this MIDI setting, so the app cannot read the track. Watch the screen instead and note what changed.';
+  const ed=await tpSetEdit(true); if(ed.after===0xff) return 'Edit mode did not come on.'; const L=[];
+  for(const [lab,seq] of BSEQ){ const a=await rd2(); setDs('tBtn',`Sending ${lab}…`); for(const cc of seq) await btnPress(cc); await sleep(500); const b=await rd2();
+    L.push(`${lab} (CC ${seq.join(', ')}): ${rdTx(a)} → ${rdTx(b)}${a.b!==b.b?': the selected track changed':''}${a.c!==b.c?': 0x0c changed':''}.`); }
+  for(const [lab,pre,val] of [['wheel +1, three times',null,1],['wheel −1, three times',null,127],['record, wheel +1, record',22,1],['record, wheel −1, record',22,127]]){
+    const a=await rd2(); setDs('tBtn',`Sending ${lab}…`); if(pre) await btnPress(pre); for(let k=0;k<3;k++){ mNow([0xB0,30,val]); await sleep(300); } if(pre) await btnPress(pre); await sleep(500); const b=await rd2();
+    L.push(`${lab} (CC 30 = ${val}): ${rdTx(a)} → ${rdTx(b)}${a.b!==b.b?': the selected track changed':''}${a.c!==b.c?': 0x0c changed':''}.`); }
+  mNow([0xB0,14,0]); M[mode]=L; save();
+  verdict('tBtn','info',[...(M.cue?['Cue setting:',...M.cue]:[]),...(M.learn?['Ctrl setting, what the TP-7 sent:',M.learn]:[]),...(M.ctrl?['Ctrl setting:',...M.ctrl]:[])]);
+  return L.some(x=>/changed/.test(x))?'Something changed: see below.':'Nothing the app can read changed. Answer what the screen did.';
+}
+async function runBtnLearn(){
+  const M=S.diag.tb||(S.diag.tb={}); if(!midiReady()) return 'Connect MIDI first.';
+  setDs('tBtn','Watching for 30 s. Press record, +, −, the other buttons once each, and turn the platter both ways.');
+  const got=await capture('tBtn',30000), seen=got.filter(m=>m.d[0]!==0xF8&&m.d[0]!==0xFE&&m.d[0]!==0xF0).map(m=>midiTxt(m.d));
+  const u=[...new Set(seen)]; M.learn=u.length?u.slice(0,40).join('; '):'nothing (is the MIDI setting ctrl?)'; save();
+  verdict('tBtn','info',[...(M.cue?['Cue setting:',...M.cue]:[]),'Ctrl setting, what the TP-7 sent:',M.learn,...(M.ctrl?['Ctrl setting:',...M.ctrl]:[])]);
+  return `${u.length} different messages.`;
+}
+
+// B. every sub-command with a value, in edit mode with track 1 selected
+const SWX=new Set([0x02,0x03,0x04,0x0b,0x0c,0x3d,0x3e,0x40,0x41,0x4a,0x50,0x51,0x55]);
+const SWJ=[...Array(128).keys()].filter(o=>!SWX.has(o)).flatMap(o=>[[o,0],[o,1]]);
+const swM=()=>S.diag.swp||(S.diag.swp={i:0,acc:[],chg:[]});
+function swVerdict(){ const M=swM(), L=[`${Math.min(M.i,SWJ.length)} of ${SWJ.length} tried (0x02, 0x03, 0x04, 0x0b, 0x0c, 0x3d, 0x3e, 0x40, 0x41, 0x4a, 0x50, 0x51 and 0x55 left out: known, or risky).`];
+  L.push(M.acc.length?`Anything but the usual status 1: ${M.acc.join(' | ')}`:'Every try answered status 1 so far.');
+  if(M.chg.length) L.push(`Changed the selected track or 0x0c: ${M.chg.join(' | ')}`);
+  verdict('tSweep',M.chg.length?'pass':'info',L); }
+async function runSweep(){
+  const e=tp7Ready(); if(e) return e; const M=swM(); if(M.i>=SWJ.length) return 'All tried. Tap Start over to repeat.';
+  const ed=await tpSetEdit(true); if(ed.after===0xff) return 'Edit mode did not come on.'; let base=await rd2();
+  for(let k=M.i;k<SWJ.length;k++){ const [o,v]=SWJ[k], nm=`0x${hx([o])} + ${v}`; setDs('tSweep',`${k+1} of ${SWJ.length}: ${nm}…`);
+    const r=await sxAsk(0x7F,[o,v],450), st=r.resp?r.resp.st:null, ev=r.events.filter(x=>!(x.cmd===0x7F&&x.v[0]===0x4D)).map(evTxt);
+    if(st!==1||ev.length){ let tail=''; if(st===0){ const b=await rd2(); tail=`; ${rdTx(base)} → ${rdTx(b)}`; if(b.b!==base.b||b.c!==base.c) M.chg.push(`${nm}${tail}`); base=b; }
+      M.acc.push(`${nm}: ${st==null?'no reply':st===0?`ok${r.resp.v.length?' '+hx(r.resp.v):''}`:`status ${st}${r.resp.reason?` "${r.resp.reason}"`:''}`}${ev.length?`, notices ${ev.join(', ')}`:''}${tail}`); }
+    M.i=k+1;
+    if(k%8===7||st==null){ save(); swVerdict(); const al=await sxAlive();
+      if(al!=='normal') return `After ${nm} the TP-7 ${al?'reported mode '+al:'stopped answering'}. Switch it off and on, then Run to go on from the next one.`;
+      if((await tpEditRead())===0xff){ M.acc.push(`edit mode was off after ${nm}`); await tpSetEdit(true); base=await rd2(); } }
+  }
+  save(); swVerdict(); return M.chg.length?'Found sub-commands that change the track or 0x0c.':'Done.';
+}
+function runSweepReset(){ S.diag.swp=null; if(S.diag.res) delete S.diag.res.tSweep; dgExtra('tSweep',[]); return 'Cleared. Run starts from the first sub-command.'; }
+DIAG.push(
+ {id:'tWatch',t:'Watch what the TP-7 reports while you change track and input',how:'You change things, the app watches, about 3 minutes. MIDI setting cue. The first step turns edit mode on. Tap a step, then do what the status line says on the TP-7 within the time. The app logs every message the TP-7 sends and reads the selected track (0x0b) and 0x0c before and after. The TP-7 already announces arming, position and the loaded file this way; if it also announces the track and the input, the app learns their codes, and a command to set them often uses the same code. For the input steps, write in the notes which inputs the platter went through, in order.',
+  acts:WATCH.map((w,i)=>[w.label,()=>runWatch(i)]),qs:[]},
+ {id:'tBtn',t:'Button and platter messages sent to the TP-7',nomidi:true,how:'Mostly automatic, about 4 minutes. In the ctrl MIDI setting the TP-7 sends CC 20 to 27 for its buttons and CC 30 for the platter (github.com/lucidyan/tp7-midi); this checks whether it also obeys them. 1. MIDI setting cue: tap Cue. The app turns edit mode on, sends record + up, right, down or left + record, and the platter ±1 with and without record around it, and reads the selected track (0x0b) and 0x0c after each. Watch the screen. 2. Switch the MIDI setting to ctrl by hand, tap Learn and press each button once and turn the platter both ways: the app logs what they send. 3. Tap Ctrl: the same sends in the ctrl setting. 4. Switch the MIDI setting back to cue.',
+  acts:[['Cue',()=>runBtn('cue')],['Learn (ctrl)',runBtnLearn],['Ctrl',()=>runBtn('ctrl')]],
+  qs:[['In the cue setting, did any message change the TP-7 screen?',['No','Yes (note which)']],['In the ctrl setting, did any message change the TP-7 screen?',['No','Yes (note which)','Did not try']]]},
+ {id:'tSweep',t:'Every sub-command with a value',how:'Automatic, about 2 minutes, with some risk: unknown commands may change TP-7 settings or recordings, or freeze it, as 0x3d did. The map sent every sub-command once without a value, and most answered status 1. Known sub-commands also answered status 1 when they got a value they do not take, so many of those may exist and need a value. This sends each one with 0 and then with 1, in edit mode with track 1 selected, and reads the selected track (0x0b) and 0x0c after every one that is accepted. Watch the screen. Every 8 tries the app checks that the TP-7 still answers and stops if not; after switching it off and on, Run goes on from where it stopped.',
+  acts:[['Run',runSweep],['Start over',runSweepReset]],qs:[['Did the TP-7 screen change during the sweep?',['No','Yes (note when and what)','It froze']]]}
+);
 const DIAG_PLAN=[
-  ['Part 1: can the app choose the input for edit mode? Record sources USB 1 only, guitar silent',['edIn']],
-  ['Part 2: record a guitar loop on the TP-7 itself. Record sources USB 1 only, guitar in line 1',['tLoopDub']],
-  ['Part 3, only for drums on their own track or stereo: three sources at once (6 output channels)',['tFixed']]
+  ['Part 1: find how the app can choose the track and the input in edit mode. Record sources USB 1 only, a recording loaded',['tWatch','tBtn','tSweep']],
+  ['Part 2, if Part 1 finds nothing: inputs set once per track by hand. Record sources line 1 and USB 1, guitar in line 1',['tSetup']],
+  ['Part 3: record a guitar loop on the TP-7 itself. Record sources USB 1 only, guitar in line 1',['tLoopDub']],
+  ['Part 4, only for drums on their own track or stereo: three sources at once (6 output channels)',['tFixed']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -3236,7 +3320,7 @@ function bindDiag(){
     const b=e.target.closest('[data-dact]'); if(!b) return; const a=b.dataset.dact;
     if(a==='close'){ root.hidden=true; return; }
     if(a==='copy'){ const txt=diagReport(), ta=$('#dgReport'); ta.value=txt; try{ await navigator.clipboard.writeText(txt); toast('Report copied.'); }catch(err){ ta.focus(); ta.select(); toast('Select all the text in the box and copy it.'); } return; }
-    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.sx={}; D.p4=null; D.p4f=null; D.sxmap=null; D.sxw=null; D.sxs=null; D.seqE=null; D.seqO=null; D.rw4a=null; D.st=null; D.s3d=null; D.p2t=null; D.chm=null; D.ldub=null; D.src=null; D.es=null; D.edIn=null; D.res_u3=null; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
+    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.sx={}; D.p4=null; D.p4f=null; D.sxmap=null; D.sxw=null; D.sxs=null; D.seqE=null; D.seqO=null; D.rw4a=null; D.st=null; D.s3d=null; D.p2t=null; D.chm=null; D.ldub=null; D.src=null; D.es=null; D.edIn=null; D.ts=null; D.tw=null; D.tb=null; D.swp=null; D.res_u3=null; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
     if(a==='applyMD'){ if(S.diag.mdKind==='take'){ S.tp.takeCueDelay=+b.dataset.v; toast(`Delay for markers set during takes: ${S.tp.takeCueDelay} ms.`); } else { S.tp.mDelay=+b.dataset.v; toast(`Marker pass delay set to ${S.tp.mDelay} ms.`); } S.diag.mdSug=null; save(); renderDiag(); return; }
     if(a==='applyLat'){ S.looper.lat=+b.dataset.v/1000; S.looper.latHow='corrected by the diagnostics'; S.diag.latSug=null; save(); renderDiag(); toast(`Looper latency set to ${b.dataset.v} ms.`); return; }
     if(a==='apply'){ S.diag.tStartSug=null; setOffset(+b.dataset.v); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms for ${offKey()}.`); return; }
