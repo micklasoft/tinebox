@@ -87,7 +87,7 @@ button:focus-visible,select:focus-visible,input:focus-visible,textarea:focus-vis
 .sec.cur{background:var(--c);color:#000}
 .sec.q{outline:2px dashed var(--c);outline-offset:2px;animation:blinkq .5s steps(2) infinite}
 @keyframes blinkq{50%{outline-color:transparent}}
-@media (prefers-reduced-motion:reduce){.sec.q{animation:none}}
+@media (prefers-reduced-motion:reduce){.sec.q,.scard.q{animation:none}}
 .songline{position:relative;flex:1;min-width:0;height:100%;border-radius:8px;background:color-mix(in srgb,var(--ink) 7%,transparent);overflow:hidden}
 .songline.off .sblk{opacity:.4}
 .sblk{position:absolute;top:3px;bottom:3px;border-radius:5px;background:color-mix(in srgb,var(--c) 72%,var(--key));color:#000;font-size:11px;font-weight:700;
@@ -350,6 +350,10 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
 .panel.tab-arrange>.pnl:not(.arr-rail){grid-column:2;min-height:0}
 .scards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
 .scard{border:1px solid var(--line);border-top:4px solid var(--c);border-radius:12px;background:var(--panel);padding:7px 9px 8px;display:flex;flex-direction:column;align-items:stretch;gap:3px;min-width:0;text-align:left;color:inherit;font:inherit}
+.scard.now .sc-top::after{content:"";flex:none;width:0;height:0;border-style:solid;border-width:5px 0 5px 8px;border-color:transparent transparent transparent var(--go)}
+.scard.q{outline:2px dashed var(--c);outline-offset:2px;animation:blinkq .5s steps(2) infinite}
+.song-on{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:0 0 12px}
+.song-on .tog{height:38px;padding:0 14px}
 .scard.sel{box-shadow:0 0 0 2px var(--c);background:color-mix(in srgb,var(--c) 12%,var(--panel))}
 .sc-top{display:flex;align-items:center;gap:7px;min-width:0}
 .sc-top .chip{width:24px;height:24px;flex:none;font-size:13px}
@@ -395,8 +399,8 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
 .pad-opts .seg{flex-wrap:wrap}
 .pad-opts .rng{grid-template-columns:52px 1fr 52px}
 
-/* upright phones: stack everything */
-@media (orientation:portrait){
+/* the layout: upright phone (build 62: the only layout, landscape dropped) */
+@media all{
   #app{padding:8px 12px 6px;max-width:640px;gap:10px}
   .top{flex-direction:column;align-items:stretch;height:auto;gap:10px}
   .screen{min-height:120px;grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto minmax(22px,auto)}
@@ -404,11 +408,14 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
   #sChord{font-size:44px}
   .transport{justify-content:center;gap:14px}
   .songbar{height:40px}
-  .pnl-play{grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto minmax(230px,1fr);height:auto;max-height:none;margin:0}
+  .pnl-play{grid-template-columns:auto minmax(0,1fr);grid-template-rows:auto minmax(150px,1fr);height:100%;min-height:0;max-height:none;margin:0;row-gap:12px}
   .stickcol{grid-column:1;grid-row:1}
-  .stick{height:150px}
+  .stick{height:clamp(112px,21vh,150px)}
   .opts{grid-column:2;grid-row:1}
-  .keys{grid-column:1/-1;grid-row:2;height:270px}
+  .keys{grid-column:1/-1;grid-row:2;height:auto;min-height:150px}
+  .key .kn{font-size:clamp(20px,3.6vh,28px)}
+  .key .kc{font-size:14px}
+  .pnl-play>.stickcol,.pnl-play>.opts{min-height:auto}
   .panel.tab-arrange{display:block;overflow-y:auto}
   .panel.tab-arrange>.pnl{overflow:visible}
   .arr-rail{flex-direction:row;width:auto;margin-bottom:10px}
@@ -426,6 +433,7 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
   .pnl-pads .pads{grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);height:min(36vh,300px)}
   .drum-ctl{flex-wrap:wrap}
 }
+@media (max-height:620px){ .screen{min-height:96px} #sChord{font-size:36px} .transport .tb.main{width:50px;height:50px} }
 
 /* guitar looper */
 .transport #loopBtn[aria-pressed="true"]{background:var(--sb);color:#fff}
@@ -471,7 +479,7 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
       <button class="tb" id="loopBtn" data-act="loopPop" aria-pressed="false" aria-haspopup="dialog" aria-expanded="false" aria-label="Guitar looper" title="Guitar looper"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h16"/><path d="M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
     </div>
   </header>
-  <div class="songbar">
+  <div class="songbar" hidden>
     <div class="secs" id="secs"></div>
     <div class="songline" id="songline" title="Song timeline"><div id="songBlocks"></div><i class="sph" id="songHead" hidden></i></div>
     <button type="button" class="tog songtog" data-k="songMode" aria-pressed="false" title="Play the arrangement">Song</button>
@@ -1050,7 +1058,7 @@ function endSong(t){
   if(R.take) finishTake(t); else { releaseWake(); setTimeout(renderTransport,Math.max(0,(t-ctx.currentTime)*1000)); }
 }
 function tapSection(i){
-  if(activeChain()&&R.playing){ toast(R.take?'A take is running. End it to switch sections.':'The arrangement is playing. Turn it off in Song to switch live.'); return; }
+  if(activeChain()&&R.playing){ toast(R.take?'A take is running. End it to switch sections.':'The arrangement is playing. Turn off Play the arrangement (Sections, Song) to switch live.'); return; }
   if(!R.playing){ R.cur=i; R.selEv=null; renderSecs(); renderLane(i); renderGrid(); renderTL(); renderTpInfo(); return; }
   R.queued=(R.queued===i||i===R.cur)?null:i;
 }
@@ -1190,7 +1198,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='61 (28 Oct 2026)';
+const APP_BUILD='62 (28 Oct 2026)';
 // 24 Oct: 0x04 toggles edit mode (no reply), 0x4a goes to the start (also in edit mode, where stop does not rewind), 0x3e calibrates the reel
 const SXOP={session:0x40,play:0x50,stop:0x51,edit:0x04,start:0x4a}; let sxId=0;
 const SXN={0x40:'Start Session',0x50:'Play',0x51:'Stop',0x04:'Edit mode toggle',0x4a:'Go to start',0x3e:'Reel calibration',0x09:'Select track',0x0a:'Set input',0x0b:'Read track',0x0c:'Read input',0x3d:'0x3d (self-test; never sent: the TP-7 froze after it on 25 Oct)'}, sxSent={};
@@ -1413,6 +1421,7 @@ function buildPanels(){
 </section>
 <section class="pnl pnl-song" data-p="song" hidden>
   <div>
+    <div class="orow song-on"><button type="button" class="tog" data-k="songMode" aria-pressed="false">Play the arrangement</button><span class="note">Off: the selected section loops.</span></div>
     <div class="chain-tiles" id="chain" role="group" aria-label="Song order"></div>
     <div class="chain-tools" id="chainTools"></div>
     <div class="chain-add" id="chainAdd"></div>
@@ -1577,7 +1586,7 @@ function secLoopInfo(i){ let n=0, now=false, t2=false; try{ (TPL.regions||[]).fo
 function secSum(s){ const hits=s.drums.reduce((a,r)=>a+r.filter(Boolean).length,0), ch=s.chords.slice().sort((p,q)=>p.s-q.s).map(e=>evName(e)).join(' ');
   return `${ch||'No chords'} · ${hits?`${hits} drum hit${hits>1?'s':''}`:'no drums'}`; }
 function renderSecEdit(){
-  const el=$('#secEdit'); if(!el) return; R.scMark=null;
+  const el=$('#secEdit'); if(!el) return; R.scMark=null; R.secMark='';
   el.innerHTML=S.sections.map((s,i)=>{ const L=secLoopInfo(i);
     return `<button type="button" class="scard${i===R.cur?' sel':''}" data-sec="${i}" style="--c:${SEC_COLORS[i]}" aria-pressed="${i===R.cur}"><span class="sc-top"><b class="chip">${LETTERS[i]}</b><b class="sc-nm">${esc(s.name)}</b><small>${s.bars} bar${s.bars>1?'s':''}</small></span><span class="sc-loop ${L[0]}">${L[1]}</span><span class="sc-sum">${esc(secSum(s))}</span></button>`; }).join('');
   renderSecHead(); }
@@ -4313,8 +4322,8 @@ function frame(){
       if(R.songMark!==R.chainPos){ R.songMark=R.chainPos; $$('#songBlocks .sblk').forEach((b,i)=>b.classList.toggle('now',i===R.chainPos)); }
     } else if(R.songMark!==-1){ sh.hidden=true; R.songMark=-1; $$('#songBlocks .sblk.now').forEach(b=>b.classList.remove('now')); }
   }
-  const mark=heard+':'+(R.queued==null?'':R.queued)+':'+R.cur;
-  if(mark!==R.secMark){ R.secMark=mark; $$('.sec').forEach((b,i)=>{ b.classList.toggle('cur',i===heard); b.classList.toggle('q',i===R.queued); }); if(R.shown.has('drums')&&R.gridSec!==R.cur){ R.gridSec=R.cur; renderGrid(); } if(R.tlSec!==R.cur){ R.selEv=null; renderTL(); renderTpInfo(); } }
+  const mark=heard+':'+(R.queued==null?'':R.queued)+':'+R.cur+':'+!!R.playing;
+  if(mark!==R.secMark){ R.secMark=mark; $$('.sec').forEach((b,i)=>{ b.classList.toggle('cur',i===heard); b.classList.toggle('q',i===R.queued); }); $$('#secEdit .scard').forEach((b,i)=>{ b.classList.toggle('now',!!R.playing&&i===heard); b.classList.toggle('q',i===R.queued); }); if(R.shown.has('drums')&&R.gridSec!==R.cur){ R.gridSec=R.cur; renderGrid(); } if(R.tlSec!==R.cur){ R.selEv=null; renderTL(); renderTpInfo(); } }
   if(R.shown.has('secs')&&(!R.scAt||now-R.scAt>0.25)){ R.scAt=now; secCardsMark(); }
   if(R.shown.has('song')&&R.chainMark!==(R.playing&&S.songMode?R.chainPos:-1)){ R.chainMark=R.playing&&S.songMode?R.chainPos:-1; $$('#chain .ctile').forEach((li,i)=>li.classList.toggle('now',i===R.chainMark)); }
   if(R.shown.has('rec')&&(!R.tkAt||now-R.tkAt>0.2)){
@@ -4351,7 +4360,7 @@ if(!S.tp.mig6){ S.tp.offsets=Object.assign({'48 kHz, 1 ch':10,'96 kHz, 6 ch':4},
 if(S.tp.clock==null) S.tp.clock=false; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
 buildPanels(); lpBuild(); setTimeout(()=>{ try{ tplKeyRender(); }catch(e){} },0); bindStick(); bindKeys(); bindChords(); bindReview(); bindDiag(); bindGlobal();
 R.tab='play'; R.shown=new Set(['play']); renderAll(); showTab('play'); requestAnimationFrame(frame);
-if(matchMedia('(orientation: portrait)').matches&&Math.min(innerWidth,innerHeight)<520) setTimeout(()=>toast('Tip: turn your phone sideways for the full layout.'),1800);
+
 </script>
 <script>
 if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(()=>{});</script>
