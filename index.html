@@ -187,7 +187,7 @@ input[type=range]{width:100%;accent-color:var(--ink);margin:0}
 
 /* song */
 /* arrange, song view: sections on the left, song order on the right */
-.pnl-song{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.15fr);gap:20px;align-items:start}
+.pnl-song{display:block;max-width:720px}
 .se{display:flex;align-items:center;gap:8px;margin-bottom:4px}
 .se .msel{width:92px;flex:none}
 .se .msel,.se .ibtn,.se input.nm{height:30px}
@@ -345,8 +345,28 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
 .songbar .songtog{flex:none;height:100%;padding:0 14px;border-radius:999px;border:0;background:color-mix(in srgb,var(--ink) 7%,transparent);box-shadow:none;font-size:13px}
 .songbar .songtog[aria-pressed="true"]{background:var(--ink);color:var(--body)}
 .panel.tab-play{overflow-y:auto;display:flex;flex-direction:column}
-.panel.tab-arrange{display:grid;grid-template-columns:auto minmax(0,1fr);gap:16px;overflow:hidden}
-.panel.tab-arrange>.pnl{min-height:0;overflow-y:auto}
+.panel.tab-arrange{display:grid;grid-template-columns:auto minmax(0,1fr);grid-auto-rows:min-content;column-gap:16px;row-gap:14px;overflow-y:auto;align-content:start}
+.panel.tab-arrange>.arr-rail{grid-column:1;grid-row:1/span 6;position:sticky;top:0;align-self:start}
+.panel.tab-arrange>.pnl:not(.arr-rail){grid-column:2;min-height:0}
+.scards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.scard{border:1px solid var(--line);border-top:4px solid var(--c);border-radius:12px;background:var(--panel);padding:7px 9px 8px;display:flex;flex-direction:column;align-items:stretch;gap:3px;min-width:0;text-align:left;color:inherit;font:inherit}
+.scard.sel{box-shadow:0 0 0 2px var(--c);background:color-mix(in srgb,var(--c) 12%,var(--panel))}
+.sc-top{display:flex;align-items:center;gap:7px;min-width:0}
+.sc-top .chip{width:24px;height:24px;flex:none;font-size:13px}
+.sc-nm{flex:1;min-width:0;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc-top small{color:var(--ink-2);font-size:12px;flex:none}
+.sc-loop{font-size:12px;font-weight:600;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sc-loop.on{color:var(--ink)}
+.sc-loop.live{color:var(--go)}
+.sc-loop.rec{color:var(--rec,#d33)}
+.sc-sum{font-size:12px;color:var(--ink-2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sec-head{display:flex;align-items:center;gap:8px;margin-top:10px;min-width:0}
+.sec-head .chip{width:30px;height:30px;flex:none}
+.sec-head .nm{flex:1 1 140px;min-width:0;max-width:260px;height:36px}
+.sec-head .msel{flex:0 0 auto;height:36px}
+.sec-head .ibtn{flex:none;height:36px;width:44px}
+.arr-h{display:flex;align-items:baseline;gap:8px;margin:2px 0 6px;font-size:15px}
+.arr-h small{font-weight:500;color:var(--ink-2);font-size:13px}
 .arr-rail{display:flex;flex-direction:column;gap:6px;width:76px}
 .arr-rail button{border:0;border-radius:10px;background:transparent;color:var(--ink-2);font-weight:600;font-size:14px;padding:9px 8px;text-align:left}
 .arr-rail button[aria-pressed="true"]{background:color-mix(in srgb,var(--ink) 7%,transparent);color:var(--ink)}
@@ -361,13 +381,19 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
 .rec-l{position:sticky;top:0}
 @media (max-height:440px){ .rec-l{position:static} .tk-state{font-size:22px} .takecard .take{height:46px;margin-top:8px} }
 .rec-r>h3:first-child{margin-top:4px}
-.pnl-drums{display:grid;grid-template-columns:minmax(0,1fr) clamp(170px,24%,280px);gap:16px;align-items:start;height:100%}
+.pnl-drums{display:block}
 .drum-ctl{margin:0 0 8px;flex-wrap:nowrap}
 .drum-ctl .seg{flex:1 1 auto;flex-wrap:nowrap}
 .drum-ctl select{flex:0 1 auto;min-width:0}
 .pnl-drums .cell{aspect-ratio:auto;height:clamp(15px,5vh,30px)}
-.pnl-drums .pads{margin:0;grid-template-columns:repeat(2,1fr);grid-template-rows:repeat(3,1fr);height:100%;min-height:150px;max-height:330px}
-.pnl-drums .pad{height:auto}
+.panel.tab-drums{overflow-y:auto;display:flex;flex-direction:column}
+.pnl-pads{width:100%;height:100%;min-height:150px;max-height:360px;margin:auto 0;display:grid;grid-template-columns:minmax(0,1fr) clamp(178px,22vw,240px);gap:clamp(12px,2.6vw,30px)}
+.pnl-pads .pads{margin:0;grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);height:100%;min-height:0;gap:10px}
+.pnl-pads .pad{height:auto;font-size:18px;display:flex;align-items:flex-end;justify-content:flex-start;padding:10px 12px;border-radius:14px}
+.pnl-pads .pad.hit{transform:translateY(2px);box-shadow:0 1px 0 var(--key-edge);background:color-mix(in srgb,var(--go) 22%,var(--key))}
+.pad-opts{justify-content:flex-start;overflow-y:auto}
+.pad-opts .seg{flex-wrap:wrap}
+.pad-opts .rng{grid-template-columns:52px 1fr 52px}
 
 /* upright phones: stack everything */
 @media (orientation:portrait){
@@ -391,8 +417,13 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
   .rec-l{position:static}
   .pnl-drums .cell{height:auto;aspect-ratio:3/4}
   .pnl-drums{height:auto}
-  .pnl-drums .pads{grid-template-columns:repeat(3,1fr);grid-template-rows:none;height:auto;min-height:0}
-  .pnl-drums .pad{height:60px}
+  .panel.tab-arrange>.pnl+.pnl{margin-top:16px}
+  .panel.tab-arrange>.arr-rail{position:static}
+  .pad-opts .rng{grid-template-columns:64px 1fr 58px}
+  .scards{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .pnl-pads{grid-template-columns:minmax(0,1fr);grid-template-rows:auto auto;height:auto;max-height:none;margin:0;gap:14px}
+  .pnl-pads .opts{grid-column:auto;grid-row:auto;overflow:visible}
+  .pnl-pads .pads{grid-template-columns:repeat(3,1fr);grid-template-rows:repeat(2,1fr);height:min(36vh,300px)}
   .drum-ctl{flex-wrap:wrap}
 }
 
@@ -448,8 +479,8 @@ label.btn{display:inline-flex;align-items:center;cursor:pointer}
   <main class="panel tab-play" id="panel"></main>
   <nav class="tabbar" role="tablist" aria-label="App sections">
     <button role="tab" data-tab="play" aria-selected="true" aria-label="Play" title="Play"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" stroke-width="1.6"><rect x="5" y="4.5" width="4" height="5.5" rx="1.2"/><rect x="10" y="4.5" width="4" height="5.5" rx="1.2"/><rect x="15" y="4.5" width="4" height="5.5" rx="1.2"/><rect x="2.5" y="12.5" width="4" height="7" rx="1.2"/><rect x="7.5" y="12.5" width="4" height="7" rx="1.2"/><rect x="12.5" y="12.5" width="4" height="7" rx="1.2"/><rect x="17.5" y="12.5" width="4" height="7" rx="1.2"/></svg></button>
-    <button role="tab" data-tab="drums" aria-selected="false" aria-label="Drums" title="Drums"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="9.5" rx="8" ry="3"/><path d="M4 9.5v6.5c0 1.7 3.6 3 8 3s8-1.3 8-3V9.5"/><path d="M8.5 3.5 11 7.5M15.5 3.5 13 7.5"/></svg></button>
-    <button role="tab" data-tab="arrange" aria-selected="false" aria-label="Arrange" title="Arrange"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="8" height="5" rx="1.5"/><rect x="13" y="5" width="8" height="5" rx="1.5"/><rect x="3" y="14" width="11" height="5" rx="1.5"/><path d="M18 13v7"/></svg></button>
+    <button role="tab" data-tab="drums" aria-selected="false" aria-label="Drum pads" title="Drum pads"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="9.5" rx="8" ry="3"/><path d="M4 9.5v6.5c0 1.7 3.6 3 8 3s8-1.3 8-3V9.5"/><path d="M8.5 3.5 11 7.5M15.5 3.5 13 7.5"/></svg></button>
+    <button role="tab" data-tab="arrange" aria-selected="false" aria-label="Sections" title="Sections"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="8" height="5" rx="1.5"/><rect x="13" y="5" width="8" height="5" rx="1.5"/><rect x="3" y="14" width="11" height="5" rx="1.5"/><path d="M18 13v7"/></svg></button>
     <button role="tab" data-tab="record" aria-selected="false" aria-label="Record to TP-7" title="Record to TP-7"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="11" r="4"/><circle cx="17" cy="11" r="4"/><path d="M7 15h10"/><circle cx="7" cy="11" r=".9" fill="currentColor"/><circle cx="17" cy="11" r=".9" fill="currentColor"/></svg></button>
     <button role="tab" data-tab="settings" aria-selected="false" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></svg></button>
   </nav>
@@ -1159,7 +1190,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='60 (28 Oct 2026)';
+const APP_BUILD='61 (28 Oct 2026)';
 // 24 Oct: 0x04 toggles edit mode (no reply), 0x4a goes to the start (also in edit mode, where stop does not rewind), 0x3e calibrates the reel
 const SXOP={session:0x40,play:0x50,stop:0x51,edit:0x04,start:0x4a}; let sxId=0;
 const SXN={0x40:'Start Session',0x50:'Play',0x51:'Stop',0x04:'Edit mode toggle',0x4a:'Go to start',0x3e:'Reel calibration',0x09:'Select track',0x0a:'Set input',0x0b:'Read track',0x0c:'Read input',0x3d:'0x3d (self-test; never sent: the TP-7 froze after it on 25 Oct)'}, sxSent={};
@@ -1336,11 +1367,16 @@ function buildPanels(){
     <div class="orow2"><span class="pl">Octave</span><div class="stp"><button type="button" data-act="oct-" aria-label="Octave down">−</button><output><b id="octOut"></b><small>octave</small></output><button type="button" data-act="oct+" aria-label="Octave up">+</button></div></div>
   </div>
 </section>
-<section class="pnl arr-rail" data-p="arrrail" hidden role="group" aria-label="Arrange view">
-  <button type="button" data-av="chords" aria-pressed="true">Chords</button>
+<section class="pnl arr-rail" data-p="arrrail" hidden role="group" aria-label="Sections view">
+  <button type="button" data-av="secs" aria-pressed="true">Sections</button>
   <button type="button" data-av="song" aria-pressed="false">Song</button>
 </section>
+<section class="pnl pnl-secs" data-p="secs" hidden>
+  <div class="scards" id="secEdit" role="group" aria-label="Loop sections"></div>
+  <div class="sec-head" id="secHead"></div>
+</section>
 <section class="pnl pnl-chords" data-p="chords" hidden>
+  <h3 class="arr-h" id="chH">Chords</h3>
   <div class="pal" id="pal"><div class="pal-keys" id="palKeys"></div></div>
   <div class="ch-tools">
     <div class="seg pal-shape" id="palShape" role="group" aria-label="Chord shape">${SHAPES.map(([d,l])=>`<button type="button" data-d="${d}">${l}</button>`).join('')}</div>
@@ -1363,14 +1399,19 @@ function buildPanels(){
   <div class="tl" id="tl"></div>
 </section>
 <section class="pnl pnl-drums" data-p="drums" hidden>
-  <div class="drum-l">
-    <div class="orow drum-ctl">${segH('kit',Object.entries(KITS).map(([k,v])=>[k,v.name]))}<select id="patSel" aria-label="Load a drum pattern"><option value="">Pattern…</option>${Object.entries(DRUM_PRESETS).map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('')}</select>${togH('autoFill','Fill')}<button type="button" class="btn" data-act="drumClear">Clear</button></div>
-    <div class="grid" id="grid" title="Tap a step to cycle off, on and accent"></div>
+  <h3 class="arr-h" id="drH">Drums</h3>
+  <div class="orow drum-ctl">${segH('kit',Object.entries(KITS).map(([k,v])=>[k,v.name]))}<select id="patSel" aria-label="Load a drum pattern"><option value="">Pattern…</option>${Object.entries(DRUM_PRESETS).map(([k,v])=>`<option value="${k}">${v.name}</option>`).join('')}</select>${togH('autoFill','Fill')}<button type="button" class="btn" data-act="drumClear">Clear</button></div>
+  <div class="grid" id="grid" title="Tap a step to cycle off, on and accent"></div>
+</section>
+<section class="pnl pnl-pads" data-p="pads" hidden>
+  <div class="pads" id="pads" title="With Rec armed, the pads write into the section's pattern">${DRUM_NAMES.map((n,i)=>`<button type="button" class="pad" data-pad="${i}"><span>${n}</span></button>`).join('')}</div>
+  <div class="opts pad-opts">
+    ${segH('kit',Object.entries(KITS).map(([k,v])=>[k,v.name]))}
+    ${rngH('lv.drums','Drums',0,1,0.01)}
+    <p class="note">With Rec armed, your hits go into the current section. Edit its steps under Sections.</p>
   </div>
-  <div class="pads" id="pads" title="With Rec armed, the pads write into the pattern">${DRUM_NAMES.map((n,i)=>`<button type="button" class="pad" data-pad="${i}">${n}</button>`).join('')}</div>
 </section>
 <section class="pnl pnl-song" data-p="song" hidden>
-  <div id="secEdit"></div>
   <div>
     <div class="chain-tiles" id="chain" role="group" aria-label="Song order"></div>
     <div class="chain-tools" id="chainTools"></div>
@@ -1467,16 +1508,17 @@ function buildPanels(){
  </div>
 </section>`;
 }
-const TAB_PANELS={play:['play'],drums:['drums'],arrange:['chords','song'],record:['rec'],settings:['sound']};
+const TAB_PANELS={play:['play'],drums:['pads'],arrange:['secs','chords','drums','song'],record:['rec'],settings:['sound']};
 function showTab(name){
   if(!TAB_PANELS[name]) name='play';
   $$('.tabbar [data-tab]').forEach(b=>b.setAttribute('aria-selected',String(b.dataset.tab===name)));
-  R.tab=name; R.shown=new Set(name==='arrange'?['arrrail',S.arrView==='song'?'song':'chords']:TAB_PANELS[name]);
+  R.tab=name; R.shown=new Set(name==='arrange'?(S.arrView==='song'?['arrrail','song']:['arrrail','secs','chords','drums']):TAB_PANELS[name]);
   $$('[data-av]').forEach(b=>b.setAttribute('aria-pressed',String(R.shown.has(b.dataset.av))));
   $$('.pnl').forEach(p=>{ p.hidden=!R.shown.has(p.dataset.p); p.scrollTop=0; });
   const pn=$('#panel'); pn.className='panel tab-'+name; pn.scrollTop=0;
   if(R.shown.has('drums')) renderGrid();
-  if(R.shown.has('song')){ renderSecEdit(); renderChain(); }
+  if(R.shown.has('secs')) renderSecEdit();
+  if(R.shown.has('song')) renderChain();
   if(R.shown.has('rec')){ renderCues(); renderTpInfo(); }
   if(R.shown.has('chords')){ renderPal(); renderTL(); }
   syncControls();
@@ -1515,7 +1557,7 @@ function renderSecs(){
     const has=s.chords.length||s.drums.some(r=>r.some(Boolean));
     return `<button type="button" class="sec" data-sec="${i}" style="--c:${SEC_COLORS[i]}" aria-label="Section ${LETTERS[i]}, ${esc(s.name)}" title="${esc(s.name)}"><b>${LETTERS[i]}</b><span>${esc(s.name)}</span><small>${s.bars} bar${s.bars>1?'s':''}${has?'':', empty'}</small></button>`;
   }).join('');
-  R.secMark='';
+  R.secMark=''; try{ secCardText(); }catch(e){}
 }
 function renderLane(i){
   R.laneSec=i; const s=S.sections[i], len=s.bars*16; let h='';
@@ -1528,15 +1570,32 @@ function renderGrid(){
   DRUM_NAMES.forEach((n,r)=>{ h+=`<span class="gl">${n}</span>`; for(let c=0;c<16;c++){ const v=s.drums[r][c]; h+=`<button type="button" class="cell${v===1?' on':v===2?' acc':''}${Math.floor(c/4)%2?' alt':''}" data-r="${r}" data-c="${c}" aria-label="${n} step ${c+1}"></button>`; } });
   g.innerHTML=h; R.gridCol=-1;
 }
+// 28 Oct, 14:22: the arrange view is about loop sections. One card per section, the selected one (the current section) edited below
+// it: its chords, then its drums.
+function secLoopInfo(i){ let n=0, now=false, t2=false; try{ (TPL.regions||[]).forEach((g,k)=>{ if(g.sec===i){ n++; if(g.t2) t2=true; if(/^(loop|listen|closing|next)$/.test(TPL.st)&&TPL.loop&&TPL.loop.k===k) now=true; } }); if(TPL.st==='rec'&&TPL.rec&&TPL.rec.sec===i) now='rec'; }catch(e){}
+  return now==='rec'?['rec','Recording the first loop']:now?['live','Looping on the TP-7']:n?['on',`On the TP-7${n>1?` ×${n}`:''}${t2?', plus Tinebox':''}`]:['','Not looped yet']; }
+function secSum(s){ const hits=s.drums.reduce((a,r)=>a+r.filter(Boolean).length,0), ch=s.chords.slice().sort((p,q)=>p.s-q.s).map(e=>evName(e)).join(' ');
+  return `${ch||'No chords'} · ${hits?`${hits} drum hit${hits>1?'s':''}`:'no drums'}`; }
 function renderSecEdit(){
-  const el=$('#secEdit'); if(!el) return;
-  el.innerHTML=S.sections.map((s,i)=>`<div class="se" style="--c:${SEC_COLORS[i]}">
-    <b class="chip">${LETTERS[i]}</b>
-    <input class="nm" data-name="${i}" value="${esc(s.name)}" maxlength="14" aria-label="Name of section ${LETTERS[i]}">
+  const el=$('#secEdit'); if(!el) return; R.scMark=null;
+  el.innerHTML=S.sections.map((s,i)=>{ const L=secLoopInfo(i);
+    return `<button type="button" class="scard${i===R.cur?' sel':''}" data-sec="${i}" style="--c:${SEC_COLORS[i]}" aria-pressed="${i===R.cur}"><span class="sc-top"><b class="chip">${LETTERS[i]}</b><b class="sc-nm">${esc(s.name)}</b><small>${s.bars} bar${s.bars>1?'s':''}</small></span><span class="sc-loop ${L[0]}">${L[1]}</span><span class="sc-sum">${esc(secSum(s))}</span></button>`; }).join('');
+  renderSecHead(); }
+// the selected section: name, length and the copy/clear menu, in one row above its chords and drums
+function renderSecHead(){ const el=$('#secHead'); if(!el) return; const i=R.cur, s=S.sections[i]; R.headSec=i;
+  el.style.setProperty('--c',SEC_COLORS[i]);
+  el.innerHTML=`<b class="chip">${LETTERS[i]}</b><input class="nm" data-name="${i}" value="${esc(s.name)}" maxlength="14" aria-label="Name of section ${LETTERS[i]}">
     <select class="msel" data-bars="${i}" aria-label="Length of section ${LETTERS[i]}">${[...new Set([1,2,4,8,s.bars])].sort((a,b)=>a-b).map(b=>`<option value="${b}"${s.bars===b?' selected':''}>${b} bar${b>1?'s':''}</option>`).join('')}</select>
-    <select class="ibtn secmenu" data-secmenu="${i}" aria-label="More for section ${LETTERS[i]}"><option value="">⋯</option>${S.sections.map((t,j)=>j===i?'':`<option value="copy:${j}">Copy to ${LETTERS[j]} ${esc(t.name)}</option>`).join('')}<option value="clear">Clear chords and drums</option></select>
-  </div>`).join('');
-}
+    <select class="ibtn secmenu" data-secmenu="${i}" aria-label="More for section ${LETTERS[i]}"><option value="">⋯</option>${S.sections.map((t,j)=>j===i?'':`<option value="copy:${j}">Copy to ${LETTERS[j]} ${esc(t.name)}</option>`).join('')}<option value="clear">Clear chords and drums</option></select>`;
+  arrHeads(); }
+// the light update while playing: selection and loop status, without touching a name being typed
+function secCardsMark(){ const el=$('#secEdit'); if(!el||!R.shown||!R.shown.has('secs')) return; const L=S.sections.map((s,i)=>secLoopInfo(i)), m=R.cur+'|'+L.map(x=>x.join(':')).join('|'); if(m===R.scMark) return; R.scMark=m;
+  $$('#secEdit .scard').forEach((c,i)=>{ c.classList.toggle('sel',i===R.cur); c.setAttribute('aria-pressed',String(i===R.cur)); const l=c.querySelector('.sc-loop'); if(l){ l.textContent=L[i][1]; l.className='sc-loop '+L[i][0]; } });
+  const h=$('#secHead'); if(R.headSec!==R.cur&&!(h&&h.contains(document.activeElement))) renderSecHead(); }
+function secCardText(){ if(!$('#secEdit')) return; $$('#secEdit .scard').forEach((c,i)=>{ const s=S.sections[i]; if(!s) return; const n=c.querySelector('.sc-nm'), b=c.querySelector('.sc-top small'), m=c.querySelector('.sc-sum');
+  if(n) n.textContent=s.name; if(b) b.textContent=`${s.bars} bar${s.bars>1?'s':''}`; if(m) m.textContent=secSum(s); }); arrHeads(); }
+function arrHeads(){ const s=S.sections[R.cur]; if(!s) return; const a=$('#chH'), b=$('#drH'), t=`<small>${LETTERS[R.cur]} ${esc(s.name)}</small>`;
+  if(a) a.innerHTML=`<span>Chords</span>${t}`; if(b) b.innerHTML=`<span>Drums</span>${t}`; }
 function clearSection(i){
   pushUndo(i); S.sections[i].chords=[]; S.sections[i].drums=pat6('empty'); R.selEv=null;
   save(); renderSecs(); renderLane(R.laneSec<0?R.cur:R.laneSec); renderGrid(); renderTL();
@@ -3136,7 +3195,8 @@ async function tplAct(a,el){
   else if(a==='tplPrint'){ if(tplBusy()||st==='rec') return; await tplStop(); const m=await tplPrint(); if(m) tplSay(m); }
   else if(a==='tplTap'){ if(tplLooping()||st==='rec'||tplBusy()) toast('Tap tempo works before a song starts.'); else if(TPL.regions.length&&st!=='idle') toast('This song keeps its tempo. Start a new song to change it.'); else tapTempo(); }
   tplRender(); }
-function tplRender(){ const s=$('#tplSmall'), d=$('#tplDub'), t2=$('#tplTineBtn');
+function tplRender(){ try{ secCardsMark(); }catch(e){}
+  const s=$('#tplSmall'), d=$('#tplDub'), t2=$('#tplTineBtn');
   if(d){ const st=TPL.st, on=TPL.armed&&TPL.arming!==1; d.classList.toggle('on',st==='rec'||on); d.textContent=st==='rec'?'Recording… tap to close the loop':on?'Recording a layer… tap to stop':TPL.regions.length?'Record a layer':'Record (new song)'; }
   if(t2){ t2.classList.toggle('on',!!(TPL.armed&&TPL.arming===1)); t2.textContent=TPL.armed&&TPL.arming===1?'Recording Tinebox… tap to stop':'Record Tinebox'; }
   if(!s) return; const g=TPL.regions[TPL.cur||0], p=TPL.passT; let pass='';
@@ -4255,6 +4315,7 @@ function frame(){
   }
   const mark=heard+':'+(R.queued==null?'':R.queued)+':'+R.cur;
   if(mark!==R.secMark){ R.secMark=mark; $$('.sec').forEach((b,i)=>{ b.classList.toggle('cur',i===heard); b.classList.toggle('q',i===R.queued); }); if(R.shown.has('drums')&&R.gridSec!==R.cur){ R.gridSec=R.cur; renderGrid(); } if(R.tlSec!==R.cur){ R.selEv=null; renderTL(); renderTpInfo(); } }
+  if(R.shown.has('secs')&&(!R.scAt||now-R.scAt>0.25)){ R.scAt=now; secCardsMark(); }
   if(R.shown.has('song')&&R.chainMark!==(R.playing&&S.songMode?R.chainPos:-1)){ R.chainMark=R.playing&&S.songMode?R.chainPos:-1; $$('#chain .ctile').forEach((li,i)=>li.classList.toggle('now',i===R.chainMark)); }
   if(R.shown.has('rec')&&(!R.tkAt||now-R.tkAt>0.2)){
     R.tkAt=now; const st=takeState(now), a=$('#tkState'), b=$('#tkSmall');
