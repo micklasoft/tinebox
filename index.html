@@ -1207,7 +1207,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='63 (28 Oct 2026)';
+const APP_BUILD='64 (29 Oct 2026)';
 // 24 Oct: 0x04 toggles edit mode (no reply), 0x4a goes to the start (also in edit mode, where stop does not rewind), 0x3e calibrates the reel
 const SXOP={session:0x40,play:0x50,stop:0x51,edit:0x04,start:0x4a}; let sxId=0;
 const SXN={0x40:'Start Session',0x50:'Play',0x51:'Stop',0x04:'Edit mode toggle',0x4a:'Go to start',0x3e:'Reel calibration',0x09:'Select track',0x0a:'Set input',0x0b:'Read track',0x0c:'Read input',0x3d:'0x3d (self-test; never sent: the TP-7 froze after it on 25 Oct)'}, sxSent={};
@@ -1305,7 +1305,7 @@ function confirmTap(el,label,fn){
   el.dataset.armed='1'; el.dataset.orig=el.textContent; el.textContent=label;
   setTimeout(()=>{ if(el.dataset.armed){ delete el.dataset.armed; el.textContent=el.dataset.orig; } },2500);
 }
-function setBpm(v){ S.bpm=clamp(Math.round(v),50,200); applySound(); save(); syncControls(); renderInfo(); renderChainMeta(); }
+function setBpm(v,exact){ S.bpm=clamp(exact?Math.round(v*10)/10:Math.round(v),50,200); applySound(); save(); syncControls(); renderInfo(); renderChainMeta(); }
 let taps=[];
 function tapTempo(){
   const n=performance.now();
@@ -1965,7 +1965,7 @@ function midiInputs(){
     if(d[0]!==0xF8){ const key=d.length>1?`${d[0].toString(16)} ${d[1]}`:d[0].toString(16), m=(R.inMap=R.inMap||{}), e=m[key]||(m[key]={n:0,v:new Set()}); e.n++; if(d.length>2&&e.v.size<12) e.v.add(d[2]); }
     if(/tp.?7/i.test(port)){ if(d[0]===0xF8) tpClockTick(now); else if(d[0]===0xFA||d[0]===0xFB) R.tpClk=[]; }
     if(R.capOn){ R.cap2.push({t:now,port,d}); if((d[0]===0xFA||d[0]===0xFB)&&R.capId) setDs(R.capId,`Start message from ${port} just arrived.`); }
-    if(d[0]===0xF0&&/tp.?7/i.test(port)&&!/blue/i.test(port)){ if(R.sxProbe) R.sxProbe(d,now); sxLog('in',d,now); const fi=sxFile(d); if(fi) R.tpFile=fi; const po=sxPosOf(d); if(po!=null) R.tpPos=po; const nt=sxNotice(d); if(nt) tpNotice(nt,now);
+    if(d[0]===0xF0&&/tp.?7/i.test(port)&&!/blue/i.test(port)){ if(R.sxProbe) R.sxProbe(d,now); sxLog('in',d,now); const fi=sxFile(d); if(fi) R.tpFile=fi; const po=sxPosOf(d); if(po!=null){ R.tpPos=po; (R.tpPosLog=R.tpPosLog||[]).push([now,po]); if(R.tpPosLog.length>4000) R.tpPosLog.splice(0,2000); } const nt=sxNotice(d); if(nt) tpNotice(nt,now);
       const gi=sxGreetReply(d); if(gi){ R.tpInfo=gi; if(gi.sw_version&&!S.diag.fw){ S.diag.fw=gi.sw_version; save(); } } }
     (R.waiters||[]).slice().forEach(w=>{ if(w.test({port,d})){ R.waiters.splice(R.waiters.indexOf(w),1); w.res({t:now,port,d}); } });
     const o=$('#dgInOut'); if(o) o.textContent=`${R.inCount} received. Last: ${port}: ${hx}`;
@@ -3087,7 +3087,10 @@ async function tplFirst(o){
 function tplCapTimer(){ const {bar}=tplK(), g=TPL.rec; clearTimeout(TPL.capT); if(!g) return;
   TPL.capT=setTimeout(()=>{ if(TPL.rec===g) tplEndFirst(g.z+TPL_CAP*bar-0.5); },Math.max(0,(g.z+TPL_CAP*bar-0.6-ctx.currentTime)*1000)); }
 async function tplEndFirst(tap,o){ const g=TPL.rec; if(!g||TPL.st!=='rec') return 'No loop is being recorded.'; o=o||{}; const G=TPL.gen; clearTimeout(TPL.capT);
-  const {bar,md}=tplK(), t=tap==null?ctx.currentTime:tap, n=Math.max(1,Math.min(TPL_CAP,Math.ceil((t-g.z-0.3)/bar))), end=g.z+n*bar, L=n*bar;
+  let {bar,md}=tplK(); const t=tap==null?ctx.currentTime:tap; let n=Math.max(1,Math.min(TPL_CAP,Math.ceil((t-g.z-0.3)/bar))), end=g.z+n*bar, L=n*bar; TPL.tempoMsg=null;
+  // 29 Oct: "Tempo follows the loop": the first loop ends on the press; its bar count is the nearest whole number, and the tempo moves to fit
+  if(o.follow&&g.k===0){ const Lp=t-g.z, nf=Math.max(1,Math.min(TPL_CAP,Math.round(Lp/bar))), bpm=240*nf/Lp;
+    if(Lp>0.25*bar&&bpm>=50&&bpm<=200){ const b0=S.bpm; setBpm(bpm,true); TPL.bpm=S.bpm; ({bar,md}=tplK()); n=nf; L=n*bar; end=g.z+L; TPL.tempoMsg=`${b0} → ${S.bpm} bpm`; pedLog('st',`first loop ${n} bar${n>1?'s':''}, tempo ${TPL.tempoMsg}`); } }
   TPL.rec=null; const off=Math.max(end+md+0.3,ctx.currentTime+0.02); tplSend([0xB0,14,0],off); TPL.armed=false;
   TPL.regions[g.k]={sec:g.sec,s:g.s,L,bars:n}; TPL.regions.length=g.k+1; TPL.tapeEnd=g.s+L; TPL.st='closing'; TPL.cur=g.k; tplSave();
   if(g.o.resize!==false) tplResizeSec(g.sec,n); tplAt(end,()=>{ if(TPL.st==='closing') tplTineStop(); });
@@ -3106,11 +3109,11 @@ function tplResizeSec(i,n){ const s=S.sections[i]; if(!s||s.bars===n) return; pu
 async function tplListen(k,o){ o=o||{}; const G=o.G!=null?o.G:TPL.gen; if(G!==TPL.gen) return ''; const g=TPL.regions[k]; if(!g) return 'No such section.'; if(TPL.bpm&&S.bpm!==TPL.bpm) setBpm(TPL.bpm); const {bar,md,adj}=tplK();
   if(!(await tplCueTo(k))) return G!==TPL.gen?'':'The tape did not go to the section.';
   if(G!==TPL.gen) return '';
-  const T=ctx.currentTime+1.2, z=T+bar, set=z+g.L+md+adj; tplGo(T); tplSend([0xB0,17,1],z+md); tplSend([0xB0,17,2],set);
+  const T=ctx.currentTime+1.2, z=T+(k===0&&g.s>0?g.s:bar), set=z+g.L+md+adj; tplGo(T); tplSend([0xB0,17,1],z+md); tplSend([0xB0,17,2],set);
   const nn=TPL_CUE0+k+1; if(nn<=127){ const tc=z+g.L-bar+md; tplSend([0xB0,16,127],tc-0.04); tplSend([0x90,nn,100],tc); tplSend([0xB0,16,0],tc+0.12); }
   TPL.loop={k,z,L:g.L,wm:z+g.L+md,set,T}; TPL.cur=k; TPL.st='listen'; TPL.passT={z,L:g.L};
   if(k===0&&TPL.key&&TPL.key.st==='listening'){ const K=TPL.key; (TPL.keyP||Promise.resolve(null)).then(r=>{ if(r&&!K.test) return; return tplKeyTry(z+0.03,g.L+0.12,'play').then(r2=>{ if(K.test){ K.play=r2; K.st='tested'; kcStop(); TPL.keyHold=false; return; } tplKeyApply(r2); }); }); }
-  if(o.sched) o.sched('listen',{T,z,L:g.L,k});
+  if(o.sched) o.sched('listen',{T:z-bar,z,L:g.L,k});
   if(TPL.pendingRec!=null){ const w=TPL.pendingRec; TPL.pendingRec=null; tplRecToggle(w); }
   tplSay(`Section ${LETTERS[g.sec]||'?'}: playing once while the loop is set…`); await sleepTo(set+TPL_SET); if(G!==TPL.gen) return ''; if(TPL.st==='listen') TPL.st='loop';
   if(TPL.st==='loop') tplSay(`Section ${LETTERS[g.sec]||'?'} is looping.${TPL.armed?' Recording.':' Tap record to add a layer.'}`); tplRender(); return ''; }
@@ -3306,7 +3309,7 @@ DIAG.push(
 const PED_CC=[64,66,65,67,68,69], PED_KEYS=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter',' '];
 // 28 Oct, your layout: 1 record (tap on, tap off; the first tap of a song records, the next closes the loop), 2 play/stop (hold 2 s:
 // clear the section's loops), 3 previous section, 4 next section, 5 record what you play on Tinebox, 6 tap tempo
-const PED_ACT={rec:'Record (tap on, tap off)',play:'Play / stop; hold 2 s: clear',prev:'Previous section',next:'Next section',tine:'Record Tinebox (tap on, tap off)',tap:'Tap tempo',tempo:'Tempo from strums',none:'Nothing'};
+const PED_ACT={rec:'Record (tap on, tap off)',play:'Play / stop; double tap or hold 2 s: clear',prev:'Previous section',next:'Next section',tine:'Record Tinebox (tap on, tap off)',tap:'Tap tempo',tempo:'Tempo from strums',none:'Nothing'};
 const PED_DEF=['rec','play','prev','next','tine','tap'];
 function pedS(){ const p=S.pedal||(S.pedal={}); if(!Array.isArray(p.acts)||p.acts.length!==6||p.v!==59){ p.acts=PED_DEF.slice(); p.v=59; } p.acts=p.acts.map(a=>PED_ACT[a]?a:'none'); if(!Array.isArray(p.midi)||p.midi.length!==6) p.midi=PED_CC.map(n=>({k:'cc',ch:null,n})); if(!Array.isArray(p.keys)||p.keys.length!==6) p.keys=PED_KEYS.slice(); return p; }
 const PED={down:[0,0,0,0,0,0],t:[0,0,0,0,0,0],timers:[],last:null,learn:null,tap:null};
@@ -3322,7 +3325,7 @@ function pedPanel(){ const P=pedS(); return `<details class="more pedcard"><summ
   <div class="pedrow">${[0,1,2,3,4,5].map(i=>`<span class="pedsw" data-pedsw="${i}">${i+1}</span>`).join('')}</div>
   ${[0,1,2,3,4,5].map(i=>`<div class="orow"><span class="lbl">Switch ${i+1}</span><select data-pedact="${i}" aria-label="Switch ${i+1} action">${Object.entries(PED_ACT).map(([k,v])=>`<option value="${k}"${P.acts[i]===k?' selected':''}>${v}</option>`).join('')}</select></div>`).join('')}
   <p class="note" id="pedLast">${P.learned?`Learned ${P.learned}.`:'Not learned yet: run diagnostics test 1 with the pedal.'}</p>
-  <p class="note">Record: the first tap of a song starts it after a count-in bar; the next tap closes the loop at the bar line after it (the Tinebox section takes that length). While a section loops, tap to start a layer and tap again to stop it. Next, from the last section, records a new one the same way. Play / stop: tap; hold 2 s to clear the section’s loops. Record Tinebox: tap on and off; what you play on Tinebox’s keys or pads goes to track 2, and Tinebox’s own chords and drums pause meanwhile. Tap tempo: while the looper is stopped; after a song, the next record tap then starts a new song at the new tempo. With no looper song, switch 2 plays and stops Tinebox itself.</p>
+  <p class="note">Record: the first tap of a song starts it after a count-in bar; the next tap closes the first loop right there, and Tinebox’s tempo follows so the loop fills whole bars (later sections close at the nearest bar line). While a section loops, tap to start a layer and tap again to stop it. Next, from the last section, records a new one the same way. Play / stop: tap; double-tap (or, in MIDI mode, hold 2 s) to clear the section’s loops. Record Tinebox: tap on and off; what you play on Tinebox’s keys or pads goes to track 2, and Tinebox’s own chords and drums pause meanwhile. Tap tempo: while the looper is stopped; after a song, the next record tap then starts a new song at the new tempo. With no looper song, switch 2 plays and stops Tinebox itself.</p>
   <p class="note">Switches count from the left. Mode 7 (MIDI): hold MODE until the red light has flashed 7 times, then connect it in GarageBand (Settings, Advanced, Bluetooth MIDI Devices) and tap Connect MIDI here. Mode 2 (keyboard, the default): pair it in the iPhone's Bluetooth settings.</p><div class="orow"><button type="button" class="btn" id="pedCopy">Copy footswitch log</button></div><p class="note">The log keeps the last 400 presses, what each did and what the TP-7 reported, also across reloads. If something goes wrong, copy it and paste it into our chat.</p></details>`; }
 document.addEventListener('change',e=>{ const s=e.target.closest&&e.target.closest('[data-pedact]'); if(!s) return; pedS().acts[+s.dataset.pedact]=s.value; save(); });
 
@@ -3528,7 +3531,8 @@ async function tplAct2(a,el,st){
     let m=await tplNew({input:test?TPIN.usb1:TPIN.line1,owner:test?'test':null}); if(m&&!TPL.file){ if(TPL.st!=='ready') TPL.file=f0; TPL.st=TPL.regions.length?'stopped':'idle'; TPL.stopReq=false; tplSay(m); return; } if(m) toast(m);
     return tplFirstNow(); }
   if(a==='tplRec'){
-    if(st==='rec') return tplEndFirst(ctx.currentTime);
+    if(st==='rec'){ const g=TPL.rec; if(g&&g.k===0&&ctx.currentTime<g.z+0.25*tplK().bar){ tplSay('Recording starts after the count-in: tap again at the end of your loop.'); return; }
+      return tplEndFirst(ctx.currentTime,{follow:!!(g&&g.k===0&&S.tp.tempoFollow!==false)}); }
     if(tplLooping()) return tplRecToggle(0);
     if(['closing','gap','cue'].includes(st)){ TPL.pendingRec=TPL.pendingRec==null?0:null; tplSay(TPL.pendingRec==null?'Layer cancelled.':'The layer starts as soon as the loop runs. Tap again to cancel.'); return; }
     if(st==='next'){ toast('The new section starts at the end of this time round. Tap record after that to close it.'); return; }
@@ -3543,7 +3547,6 @@ async function tplAct2(a,el,st){
     if(TPL_STOPLATER.includes(st)){ TPL.stopReq=true; tplSay(st==='new'?'Stopping once the new recording is made…':st==='clear'?'Stopping once the section is cleared…':'Stopping once the print is done…'); return; }
     if(a==='tplStop'){ await tplStop(); return; }
     if(TPL.regions.length){ TPL.fresh=false; return tplPlayFrom(TPL.cur||0); }
-    if(!R.playing&&performance.now()-(TPL.stopAt||-1e9)<800){ pedLog('st','play tap right after a stop: ignored (a double stomp)'); return; }
     doAct('play'); pedLog('st',R.playing?'no looper song: Tinebox plays':'no looper song: Tinebox stopped'); return; }
   if(a==='tplNext'){
     if(tplLooping()){ const m=await tplNext(Object.assign(tplSecInfo(),{sched:tplTinebox})); R.queued=null; if(m) tplSay(m); return; }
@@ -3555,6 +3558,10 @@ async function tplAct2(a,el,st){
     const nm=TPL.regions[k]?LETTERS[TPL.regions[k].sec]||'?':'?'; if(m){ TPL.st='stopped'; tplSay(m); return; }
     toast('Section cleared.'); if(TPL.stopReq||!was){ TPL.stopReq=false; TPL.st='stopped'; tplSay(`Section ${nm} cleared.`); return; }
     TPL.st='cue'; const G=TPL.gen, m2=await tplListen(k,{sched:tplTinebox,G}); if(m2){ if(TPL.st==='cue') TPL.st='stopped'; tplSay(m2); } return; }
+  if(a==='tplClear2'){ // the second of two quick taps of switch 2: the first already played or stopped; clear the section and stay stopped
+    if(TPL_STOPLATER.includes(st)||['rec','closing','gap','next'].includes(st)){ toast('A double tap clears while a section loops or is stopped.'); return; }
+    if(!TPL.regions.length) return; const k=TPL.cur||0; await tplStop(); const m=await tplClear(k); TPL.st='stopped';
+    tplSay(m||`Section ${TPL.regions[k]?LETTERS[TPL.regions[k].sec]||'?':'?'} cleared.`); if(!m) toast('Section cleared.'); return; }
   if(a==='tplPrint'){ if(tplBusy()||st==='rec') return; await tplStop(); const m=await tplPrint(); TPL.stopReq=false; if(m) tplSay(m); return; }
   if(a==='tplTap'){ if(tplLooping()||st==='rec'||tplBusy()){ toast('Tap tempo works while the looper is stopped.'); return; }
     tapTempo(); if(TPL.regions.length){ TPL.fresh=true; if(taps.length>=3) tplSay(`New tempo ${S.bpm} bpm: tap record to start a new song at it. Play keeps the current song (${TPL.bpm||'its'} bpm).`); } return; }
@@ -3600,7 +3607,8 @@ function pedAct(i,on){ const a=pedS().acts[i], held=PED.down[i]; PED.down[i]=on?
   if(R.dgBusy&&!R.pedLive){ if(on) toast('A diagnostics test is running.'); return; }
   const go=x=>{ pedLog('do',`switch ${i+1}: ${x.replace(/^tpl/,'')} (looper ${TPL.st})`); tplAct(x).catch(err=>pedLog('err',String(err&&err.message||err))); };
   // play/stop acts on release, so that holding it 2 s can clear the section instead
-  if(a==='play'){ if(on){ PED.timers[i]=setTimeout(()=>{ if(PED.down[i]===1){ PED.down[i]=2; go('tplClear'); } },2000); return; } if(held===1) go('tplPlay'); return; }
+  if(a==='play'){ if(on){ PED.timers[i]=setTimeout(()=>{ if(PED.down[i]===1){ PED.down[i]=2; go('tplClear'); } },2000); return; }
+    if(held!==1) return; const now=performance.now(), dbl=now-(PED.lastPlay==null?-1e9:PED.lastPlay)<450; PED.lastPlay=dbl?null:now; go(dbl?'tplClear2':'tplPlay'); return; }
   if(!on) return;
   if(a==='rec') go('tplRec'); else if(a==='tine') go('tplTine'); else if(a==='next') go('tplNext'); else if(a==='prev') go('tplPrev');
   else if(a==='tap') go('tplTap'); else if(a==='tempo'){ if(tplLooping()||tplBusy()||TPL.st==='rec'){ toast('Stop first: the tempo changes between songs.'); return; } tplStrumTempo(); } }
@@ -3615,7 +3623,7 @@ function ppShow(main,sub,beat){ let el=$('#pedPrompt'); if(!el){ el=document.cre
   PP.n=(PP.n||0)+1; PP.main=main||''; el.hidden=!main; $('#ppMain').textContent=main||''; $('#ppSub').textContent=sub||''; if(beat!==undefined) $('#ppBeat').textContent=beat||''; }
 // the beat counter: count-in, bar and beat of the pass being recorded, or the time round of a loop; NOW on the beat to tap
 function ppBeats(target){ clearInterval(PP.iv); const el=()=>$('#ppBeat'); if(!target&&target!==0){ if(el()) el().textContent=''; return; }
-  if(target&&target.auto){ const p=TPL.passT, {beat}=tplK(), n=p&&ctx?Math.floor((ctx.currentTime-p.z)/beat):-1; let b=2; while(n>(b*4-1)-2) b+=2; target.bar=b; target.beat=4; PP.target=b; }
+  if(target&&target.auto){ const p=TPL.passT, {beat}=tplK(), n=p&&ctx?Math.floor((ctx.currentTime-p.z)/beat):-1; let b=2; while(n>b*4-2) b+=2; target.bar=b+1; target.beat=1; PP.target=b; }
   PP.iv=setInterval(()=>{ const e=el(); if(!e||!ctx) return; const p=TPL.passT; if(!p){ e.textContent=''; return; } const {beat}=tplK(), t=ctx.currentTime-p.z;
     if(t<0){ e.textContent=t>-4*beat-0.05?`count-in ${Math.min(4,Math.floor((t+4*beat)/beat)+1)}`:''; e.classList.remove('now'); return; }
     const n=Math.floor(t/beat), loopN=TPL.st==='rec'?null:Math.round(p.L/beat), m=loopN?n%loopN:n, bar=Math.floor(m/4)+1, b=m%4+1, now=target&&bar===target.bar&&b===target.beat;
@@ -3668,14 +3676,18 @@ async function runPedCheck(){ const id='tPed', L=[], P=pedS(); let ok=true;
     // 2. a 3 s hold of switch 2: the clear needs the release to come after 2 s, once
     let t0=performance.now(); ppShow('Hold switch 2 for 3 seconds','Then let go.'); PED.rep[1]=0;
     if(await nextDown(15000,t0)){ await waitFor(()=>ev.some(x=>!x.on&&x.i===1&&x.t>t0),8000,20); await sleep(300); const d=ev.find(x=>x.on&&x.i===1&&x.t>t0), u=ev.find(x=>!x.on&&x.i===1&&x.t>t0);
-      const held=d&&u?(u.t-d.t)/1000:null, g=held!=null&&held>=2.2; if(!g) ok=false;
-      L.push(`Hold switch 2: ${held!=null?`released after ${held.toFixed(2)} s`:'no release arrived'}${mode==='keys'?`, ${PED.rep[1]} key repeats on the way`:''}. ${g?'The 2 s hold (clear) would fire once.':held!=null?'Too short to test the 2 s hold: run Check again and hold longer.':'Without a release the app cannot tell a hold from a tap ✗.'}`); }
+      const held=d&&u?(u.t-d.t)/1000:null, g=held!=null&&held>=2.2; if(!g&&mode!=='keys') ok=false;
+      L.push(`Hold switch 2: ${held!=null?`released after ${held.toFixed(2)} s`:'no release arrived'}${mode==='keys'?`, ${PED.rep[1]} key repeats on the way`:''}. ${g?'The 2 s hold (clear) would fire once.':held!=null?(mode==='keys'?'In keyboard mode the pedal sends every press as a short tap, so holds cannot work: a double tap clears instead.':'Too short to test the 2 s hold: run Check again and hold longer.'):'Without a release the app cannot tell a hold from a tap ✗.'}`); }
     else { L.push('Hold switch 2: nothing arrived.'); ok=false; }
+    // 2b. a double tap of switch 2 (clear)
+    t0=performance.now(); ppShow('Double-tap switch 2','Two quick taps, as for clearing a section.'); await nextDown(15000,t0); await sleep(1300);
+    { const d=ev.filter(x=>x.t>t0&&x.on&&x.i===1), u=ev.filter(x=>x.t>t0&&!x.on&&x.i===1), gap=d.length>=2?Math.round(d[1].t-d[0].t):null, g=d.length===2&&u.length===2&&gap<450; if(!g) ok=false;
+      L.push(`Double tap of switch 2: ${d.length} press${d.length===1?'':'es'}, ${u.length} release${u.length===1?'':'s'}${gap!=null?`, ${gap} ms apart`:''}. ${g?'It would clear the section.':gap!=null&&gap>=450?'Too slow for a double tap (the second tap must come within 0.45 s) ✗.':'✗'}`); }
     // 3. fast taps: every press arrives, nothing doubles
     t0=performance.now(); ppShow('Tap switch 4 five times, fast','As fast as you comfortably can.'); await nextDown(15000,t0); await sleep(4000);
-    { const w=ev.filter(x=>x.t>t0&&x.i===3), d=w.filter(x=>x.on), u=w.filter(x=>!x.on), gaps=d.slice(1).map((x,j)=>Math.round(x.t-d[j].t));
+    { const w=ev.filter(x=>x.t>t0&&x.i===3), d=w.filter(x=>x.on), u=w.filter(x=>!x.on), gaps=d.slice(1).map((x,j)=>Math.round(x.t-d[j].t)), oth=ev.filter(x=>x.t>t0&&x.on&&x.i!==3), ow=[...new Set(oth.map(x=>x.i+1))];
       const g=d.length===5&&u.length===5; if(!g&&d.length!==u.length) ok=false;
-      L.push(`Five fast taps of switch 4: ${d.length} presses, ${u.length} releases${gaps.length?`, ${Math.min(...gaps)} to ${Math.max(...gaps)} ms apart`:''}${g?'.':d.length===u.length?' (if you tapped five times, a tap was lost or doubled).':' ✗.'}`); }
+      L.push(`Five fast taps of switch 4: ${d.length} presses, ${u.length} releases${gaps.length?`, ${Math.min(...gaps)} to ${Math.max(...gaps)} ms apart`:''}${ow.length?`; meanwhile ${oth.length} press${oth.length>1?'es':''} of switch ${ow.join(' and ')}`:''}${g?'.':d.length===u.length?' (if you tapped five times, a tap was lost or doubled).':' ✗.'}`); }
     // 4. two at once
     t0=performance.now(); ppShow('Press switches 1 and 2 together','Both at once, then let go.'); await nextDown(15000,t0); await sleep(1500);
     { const d=ev.filter(x=>x.t>t0&&x.on), s1=d.find(x=>x.i===0), s2=d.find(x=>x.i===1), g=!!(s1&&s2); if(!g) ok=false;
@@ -3691,7 +3703,7 @@ async function runPedCheck(){ const id='tPed', L=[], P=pedS(); let ok=true;
     else { const others=raw.filter(x=>x.src==='midi'&&P.port&&x.port!==P.port).length, odd=raw.filter(x=>x.src==='midi'&&!pedIdxMidi(x.d)).length;
       L.push(`MIDI seen: ${raw.filter(x=>x.src==='midi').length} messages${odd?`, ${odd} that match no switch`:''}${others?`, ${others} from other ports (ignored)`:''}.`); }
   } finally { PED.probe=null; PED.probeRaw=null; ppShow(''); }
-  const prev=((S.diag.extra||{}).tPed||[]).filter(x=>!/^(Check|Switch \d|Hold switch|Five fast|Switches 1 and|Keys seen|MIDI seen)/.test(x)); S.diag.pedChk={ok}; save();
+  const prev=((S.diag.extra||{}).tPed||[]).filter(x=>!/^(Check|Switch \d|Hold switch|Double tap|Five fast|Switches 1 and|Keys seen|MIDI seen)/.test(x)); S.diag.pedChk={ok}; save();
   const r=(S.diag.res||{}).tPed; verdict('tPed',ok&&(!r||r.s!=='warn')?'pass':'warn',[...prev,...L]); return ok?'Every switch arrived once, with its release.':'See below: something did not arrive as it should.'; }
 
 // test 3, Run 1: the looper played with the pedal, step by step, with tones standing in for the guitar
@@ -3709,9 +3721,9 @@ async function runPedLoop1(){ const id='tPedLoop';
     let ok=await plUntil(()=>TPL.st==='rec'&&TPL.rec,15000); plChk('Switch 1 starts a new song',ok&&!!TPL.file,ok?`${fileTxt(TPL.file)}, first pass from ${((TPL.rec.z-ctx.currentTime)).toFixed(1)} s`:`the looper is ${TPL.st}: ${TPL.msg||''}`);
     if(!ok) throw new Error('The song did not start.'); const zA=TPL.rec.z, {bar,beat}=tplK(); const wA=ptOn(PLF.A,zA-0.02);
     // 3. close the loop on beat 4 of bar 2
-    ppBeats({auto:true}); h=await plWait(0,'Press switch 1 on NOW',`On beat 4 of bar ${PP.target}: section A closes at the end of bar ${PP.target}.`,{ms:90000}); ppBeats(null); const wantA=PP.target;
+    ppBeats({auto:true}); h=await plWait(0,'Press switch 1 on NOW',`On the downbeat after bar ${PP.target}: section A ends right there, and Tinebox’s tempo follows your timing.`,{ms:90000}); ppBeats(null); const wantA=PP.target;
     if(!h) throw new Error('No press to close the loop.'); const tc=h[0].c-(zA+wantA*bar); await plUntil(()=>TPL.regions[0],3000); const g0=TPL.regions[0]; wA.to=g0?zA+g0.L-0.05:zA+2*bar-0.05;
-    ok=await plUntil(()=>TPL.st==='loop',40000); plChk('Switch 1 closes the loop',!!(g0&&g0.bars===wantA&&ok),`${g0?g0.bars:'?'} bar${g0&&g0.bars===1?'':'s'} (asked: ${wantA}); you tapped ${Math.abs(tc*1000).toFixed(0)} ms ${tc<0?'before':'after'} the end of bar ${wantA}${ok?'; it loops':`; the looper is ${TPL.st}`}`);
+    ok=await plUntil(()=>TPL.st==='loop',40000); plChk('Switch 1 closes the loop',!!(g0&&g0.bars===wantA&&ok),`${g0?g0.bars:'?'} bar${g0&&g0.bars===1?'':'s'} (asked: ${wantA}); you tapped ${Math.abs(tc*1000).toFixed(0)} ms ${tc<0?'before':'after'} the end of bar ${wantA}${TPL.tempoMsg?`; tempo ${TPL.tempoMsg}`:''}${ok?'; it loops':`; the looper is ${TPL.st}`}`);
     if(!ok) throw new Error('The loop did not start.'); const LA=TPL.loop.L;
     // 4. a guitar layer, one time round
     ppBeats(1); h=await plWait(0,'Press switch 1','Record a layer.'); let tOn=h&&h[0].c; const wL=ptOn(PLF.lay,ctx.currentTime);
@@ -3740,7 +3752,7 @@ async function runPedLoop1(){ const id='tPedLoop';
     h=await plWait(3,'Press switch 4','Section B starts at the end of this time round.'); ok=await plUntil(()=>(TPL.st==='next'||TPL.st==='rec')&&TPL.rec&&TPL.rec.k===1,5000);
     if(!ok){ plChk('Switch 4 starts section B',false,`the looper is ${TPL.st}: ${TPL.msg||''}`); throw new Error('Section B did not start.'); }
     const zB=TPL.rec.z, wB=ptOn(PLF.B,zB-0.02); await plUntil(()=>TPL.st==='rec',LA*1000+3000); plChk('Switch 4 starts section B at the end of the time round',TPL.st==='rec',`it began ${(zB-h[0].c).toFixed(2)} s after your tap`);
-    ppBeats({auto:true}); const wantB=PP.target; h=await plWait(0,'Press switch 1 on NOW',`On beat 4 of bar ${wantB} of section B.`,{ms:90000}); ppBeats(null);
+    ppBeats({auto:true}); const wantB=PP.target; h=await plWait(0,'Press switch 1 on NOW',`On the downbeat after bar ${wantB} of section B.`,{ms:90000}); ppBeats(null);
     await plUntil(()=>TPL.regions[1],3000); const g1=TPL.regions[1]; wB.to=g1?zB+g1.L-0.05:ctx.currentTime; ok=await plUntil(()=>TPL.st==='loop'&&TPL.loop&&TPL.loop.k===1,40000);
     plChk('Switch 1 closes section B',!!(g1&&g1.bars===wantB&&ok),`${g1?g1.bars:'?'} bars (asked: ${wantB})${ok?'; it loops':`; the looper is ${TPL.st}`}`);
     // 8. switch 3 back to A; 9. switch 4 to B again (an existing section: nothing new is recorded)
@@ -3752,9 +3764,8 @@ async function runPedLoop1(){ const id='tPedLoop';
     h=await plWait(1,'Tap switch 2','Stop.'); const ts=h&&h[0].t; ok=await plUntil(()=>TPL.st==='stopped',3000); await sleep(600);
     plChk('Switch 2 stops',ok&&!(R.playing&&R.chainOverride),`${R.tpPlay?(R.tpPlay.v===0&&R.tpPlay.t>=ts?'the TP-7 reported playing = 0':'no playing = 0 report from the TP-7'):'the TP-7 sent no playing reports'}`);
     h=await plWait(1,'Tap switch 2','Play: section B loops again.'); ok=await plUntil(()=>TPL.st==='loop'&&TPL.loop&&TPL.loop.k===1,25000); plChk('Switch 2 plays the current section',ok,ok?'':`the looper is ${TPL.st}`);
-    h=await plWait(1,'Hold switch 2 for 2 seconds','Clears section B, then it loops again.'); const nClear=await plUntil(()=>TPL.st==='clear',6000);
-    ok=nClear&&await plUntil(()=>TPL.st==='loop',40000); plChk('Holding switch 2 clears the section and loops on',ok,ok?'':`the looper is ${TPL.st}${nClear?'':' (no clear began: was it held 2 s?)'}`);
-    h=await plWait(1,'Tap switch 2','Stop.'); await plUntil(()=>TPL.st==='stopped',3000); await sleep(500);
+    h=await plWait(1,'Double-tap switch 2','Two quick taps: the first stops, the second clears section B.',{n:2,ms:30000}); const nClear=await plUntil(()=>TPL.st==='clear',6000);
+    ok=nClear&&await plUntil(()=>TPL.st==='stopped',40000); plChk('A double tap of switch 2 clears the section and stays stopped',ok,ok?'':`the looper is ${TPL.st}${nClear?'':` (no clear began${h&&h.length>1?`: the taps were ${Math.round(h[1].t-h[0].t)} ms apart, 450 at most`:''})`}`); await sleep(500);
     // 14. what is on the tape
     ppShow('Listening back…','The app plays the test recording back with the loop off. Nothing to press.');
     const r=await plScan(id,[PLF.lay,PLF.dbl,PLF.tine,PLF.B,PLF.G]);
@@ -3785,7 +3796,7 @@ async function runPedLoop2(){ const id='tPedLoop';
     h=await plWait(0,'Press switch 1','A new song again.',{ms:40000}); ok=await plUntil(()=>TPL.st==='rec'&&TPL.rec,15000); if(!ok) throw new Error('The song did not start.');
     const zA=TPL.rec.z, {bar}=tplK(), wA=ptOn(PLF.A,zA-0.02); await plUntil(()=>ctx.currentTime>zA+0.2,8000);
     h=await plWait(3,'Press switch 4','During the first pass: it should change nothing.'); await sleep(700); plChk('Switch 4 during a first pass changes nothing',TPL.st==='rec'&&!TPL.regions.length,`the looper is ${TPL.st}`);
-    ppBeats({auto:true}); h=await plWait(0,'Press switch 1 on NOW',`On beat 4 of bar ${PP.target}. Then press switch 1 once more straight away.`,{ms:90000}); ppBeats(null);
+    ppBeats({auto:true}); h=await plWait(0,'Press switch 1 on NOW',`On the downbeat after bar ${PP.target}. Then press switch 1 once more straight away.`,{ms:90000}); ppBeats(null);
     await plUntil(()=>TPL.regions[0],3000); wA.to=TPL.regions[0]?zA+TPL.regions[0].L-0.05:ctx.currentTime;
     // 3. record while the loop closes: the layer must wait and start once it loops
     h=await plWait(0,'Press switch 1 again, now','A layer, asked for while the loop closes.',{ms:15000}); const st3=TPL.st;
@@ -3798,9 +3809,7 @@ async function runPedLoop2(){ const id='tPedLoop';
     // 4. stop while Next waits for the end of the time round: nothing may record afterwards
     const t4=performance.now(); h=await plWait([3,1],'Press switch 4, then switch 2 straight away','Section B is asked for, then cancelled by stop before it starts.',{n:2,ms:30000}); const stN=h&&h[1]?h[1].st:'?'; wG=ptOn(PLF.G,ctx.currentTime); await sleep(Math.max(2500,LA*1000+500)); wG.to=ctx.currentTime;
     plChk('Switch 2 while section B waits: stops, and B never records',TPL.st==='stopped'&&TPL.regions.length===1&&!TPL.rec&&!(R.tpArm&&R.tpArm.v===1&&R.tpArm.t>t4+300),`stop pressed while the looper was ${stN}; now ${TPL.st}, ${TPL.regions.length} section${TPL.regions.length>1?'s':''}${R.tpArm&&R.tpArm.t>t4?`; the TP-7's last report: armed = ${R.tpArm.v}`:''}`);
-    // 5. two fast taps of switch 2 (play, stop)
-    h=await plWait(1,'Tap switch 2 twice, quickly','Play and straight away stop.',{n:2,ms:20000}); await sleep(5000);
-    const lis=TPL.maxListen||1; plChk('Two quick taps of switch 2 end stopped, and once',TPL.st==='stopped'&&!(R.playing&&R.chainOverride)&&lis<=1,`the looper is ${TPL.st}${lis>1?`; ${lis} start-ups ran at once`:''}`);
+    // 5. (two quick taps of switch 2 clear the section from build 64: tested in Run 1)
     // 6. play, then two fast taps of switch 3 (previous: section A again from its start)
     h=await plWait(1,'Tap switch 2','Play.'); ok=await plUntil(()=>TPL.st==='loop',25000); const n0=TPL.nGoto||0;
     h=await plWait(2,'Tap switch 3 twice, quickly','Section A from its start, once.',{n:2,ms:20000}); await sleep(600); ok=await plUntil(()=>TPL.st==='loop',25000); await sleep(800);
@@ -3829,16 +3838,148 @@ function plVerdict(L,run){ const keep=((S.diag.extra||{}).tPedLoop||[]), cut=kee
 pedLog('app',`page loaded ${new Date().toLocaleString()}, build ${APP_BUILD}`);
 
 DIAG.push(
- {id:'tPedLoop',t:'The looper with your footswitch',how:'You press, about 4 minutes per run. Needs test 1 (Learn) done, the TP-7 connected, MIDI setting cue, record sources line 1, USB 1 and USB 2. A large banner tells you which switch to press; other switches are refused and noted. The app stands in for your guitar with a tone on every beat, one pitch per step, so one playback at the end shows what landed where (Tinebox’s own chords and drums are silent meanwhile). Each run makes its own new TP-7 recording (the looper starts afresh, as with New song) and leaves the TP-7 on track 1, line 1. Run 1, your layout in order: tap tempo (6), new song (1), close the loop on beat 4 of bar 2 (1), a layer (1, 1), on and straight off (1 twice), Record Tinebox (5, 5), section B (4, then 1 on beat 4 of bar 2), back to A (3), B again (4), stop (2), play (2), hold 2 s to clear B (2), stop (2). Run 2, awkward moments: stop in the count-in, Next during a first pass, record while the loop closes, stop while section B waits, play and stop fast, previous twice fast, tap tempo while it loops.',
+ {id:'tPedLoop',t:'The looper with your footswitch',how:'You press, about 4 minutes per run. Needs test 1 (Learn) done, the TP-7 connected, MIDI setting cue, record sources line 1, USB 1 and USB 2. A large banner tells you which switch to press; other switches are refused and noted. The app stands in for your guitar with a tone on every beat, one pitch per step, so one playback at the end shows what landed where (Tinebox’s own chords and drums are silent meanwhile). Each run makes its own new TP-7 recording (the looper starts afresh, as with New song) and leaves the TP-7 on track 1, line 1. Run 1, your layout in order: tap tempo (6), new song (1), close the loop on beat 4 of bar 2 (1), a layer (1, 1), on and straight off (1 twice), Record Tinebox (5, 5), section B (4, then 1 on beat 4 of bar 2), back to A (3), B again (4), stop (2), play (2), double-tap to clear B (2). The first loop ends on your press on the downbeat and Tinebox’s tempo follows it. Run 2, awkward moments: stop in the count-in, Next during a first pass, record while the loop closes, stop while section B waits, previous twice fast, tap tempo while it loops.',
   acts:[['Run 1',runPedLoop1],['Run 2',runPedLoop2]],
   qs:[['Run 1: track 2 alone held',['A high tone in section A','Nothing','Something else','No switch 5 step']],['Did the TP-7 or the app do anything you did not expect?',['No','Yes (note what and when)']]],
   av:(a)=>{ const H=S.diag.pedLoop; if(!H) return null; if(a(1)===1) return 'warn'; if(a(0)!=null&&a(0)!==0&&a(0)!==3) return 'warn'; return null; }}
 );
 
 TPL.gen=TPL.gen||0;
+/* build 64 (29 Oct, 10:19: "an awkward pause of about 2 seconds in every recording … switch 1 should start recording immediately, and
+   pressing it again should re-start immediately from the in-point"). You chose to measure the TP-7 first. This build adds that test, and:
+   the first loop ends on your press and Tinebox's tempo follows it; switch 1 in the count-in waits; a double tap of switch 2 clears
+   (keyboard mode sends no holds: every press arrived as a 2 ms tap); the marker delay is back at 79 ms when it is missing. */
+
+// --- tFast: how fast can the TP-7 start recording, and how fast can it play the in-point again?
+// Timing comes from the TP-7's own position reports (M, every ~200 ms while the tape moves): position p at time t means the tape was
+// at 0 at t − p, so the median of t − p over a pass is when that pass started. Audio from the USB return shows what was recorded/heard.
+const c2p=t=>audioToPerf(t), p2c=t=>ctx.currentTime+(t-performance.now())/1000;
+function tfZero(t1,t2,minP){ const p=(R.tpPosLog||[]).filter(x=>x[0]>=t1&&x[0]<=t2&&x[1]>=(minP==null?150:minP)); if(p.length<2) return null; return medOf(p.map(x=>x[0]-x[1])); }
+const tfMoves=(t1,t2)=>(R.tpPosLog||[]).filter(x=>x[0]>=t1&&x[0]<=t2);
+async function tfPrep(id){ TPL.dg=id; const m=await tplNew({input:TPIN.usb1,owner:'test'}); if(!TPL.file) return m||'No new recording.'; TPL.st='idle';
+  if(!(await tpEnsureStart(id))) return 'The tape did not go back to the start.'; return ''; }
+const TFG=0.08, TFN=15; // start test: a tone every 80 ms for 1.2 s from the moment the messages go out
+
+// Run 1: five ways to start a recording in edit mode, each its own pitch, all on track 1 of one new recording
+async function runFast1(){ const id='tFast', e=await p4Need(); if(e) return e; let m=await tfPrep(id); if(m) return m; if(!(await lpOpenInput())) return 'Audio input was blocked.';
+  const F=[P4.F.p1,P4.F.p2,P4.F.p3,P4.F.x2,P4.F.x3], V=[
+    ['A. arm, Start Session and Play at once',t=>{ midiSend([0xB0,14,127],t); midiSend(sxMsg(SXOP.session),t); midiSend(sxMsg(SXOP.play),t); }],
+    ['B. arm and Play, no Start Session',t=>{ midiSend([0xB0,14,127],t); midiSend(sxMsg(SXOP.play),t); }],
+    ['C. Start Session 2 s ahead, then arm and Play at once',t=>{ midiSend(sxMsg(SXOP.session),t-2); midiSend([0xB0,14,127],t); midiSend(sxMsg(SXOP.play),t); }],
+    ['D. armed 1 s ahead, then Play only',t=>{ midiSend([0xB0,14,127],t-1); midiSend(sxMsg(SXOP.play),t); }],
+    ['E. as the looper does now: arm 0.8 s and Start Session 0.25 s ahead, then Play',t=>{ midiSend([0xB0,14,127],t-0.8); midiSend(sxMsg(SXOP.session),t-0.25); midiSend(sxMsg(SXOP.play),t); }]];
+  const res=[];
+  for(let j=0;j<V.length;j++){ if(!(await tpEnsureStart(id))) return 'The tape did not go back to the start.'; setDs(id,`Start ${j+1} of ${V.length}: ${V[j][0].slice(3)}…`);
+    const T=ctx.currentTime+2.4, tp=c2p(T); V[j][1](T); for(let k=0;k<TFN;k++) burst(T+k*TFG,F[j]);
+    await sleepTo(T+TFN*TFG+0.7); mNow(sxMsg(SXOP.stop)); mNow([0xB0,14,0]); await sleep(800);
+    const z=tfZero(tp-300,performance.now()); res.push({name:V[j][0],lat:z!=null?Math.round(z-tp):null,moved:tfMoves(tp,performance.now()).length}); }
+  const cap=await p4Listen(id,TFN*TFG+1.5,{say:'Playing the five starts back and listening…'}), sc=cap?toneScan(cap,F):null;
+  const L=[`Run 1 (starting), ${new Date().toLocaleTimeString()}, ${fileTxt(TPL.file)}. Each start sent a tone every ${TFG*1000} ms from the moment of the message:`];
+  res.forEach((r,j)=>{ r.kept=sc?sc[j].on.length:null;
+    L.push(`${r.name}: ${r.lat!=null?`the tape ran ${r.lat} ms after the message`:'no position reports, so the tape did not run'}${r.kept!=null?`; ${r.kept} of ${TFN} tones recorded${r.kept?` (about the first ${Math.max(0,(TFN-r.kept)*TFG*1000)} ms lost)`:''}`:''}.`); });
+  const ok=res.filter(r=>r.lat!=null&&r.kept), best=ok.sort((a,b)=>a.lat-b.lat)[0];
+  if(best) L.push(`Fastest that recorded: ${best.name.slice(0,2)} ${best.lat} ms. A footswitch start can use it, with the recording made ready before you press.`);
+  S.diag.fast=Object.assign(S.diag.fast||{},{r1:res.map(r=>({lat:r.lat,kept:r.kept}))}); save(); tfVerdict(L,1); return best?`Fastest start: ${best.lat} ms.`:'No start method recorded anything.'; }
+
+// Run 2: restarting at the in-point. A 2-bar base (tone on every beat); at the end of bar 2 each method tries to play the in-point again.
+// The audible gap is measured against a seamless loop: the in-point's tone should come exactly one beat after the last tone of bar 2.
+async function runFast2(){ const id='tFast', e=await p4Need(); if(e) return e; let m=await tfPrep(id); if(m) return m; if(!(await lpOpenInput())) return 'Audio input was blocked.';
+  const {beat,md}=tplK(), A=P4.F.p1, adj=(S.tp.loopAdj==null?13:S.tp.loopAdj)/1000; lpStartCap(120); const R2=[], t00=ctx.currentTime;
+  // the base, recorded the usual way
+  setDs(id,'Recording a 2-bar base…'); let T=ctx.currentTime+1.6; const T0=T+0.4; midiSend([0xB0,14,127],T-0.8); midiSend(sxMsg(SXOP.session),T-0.25); midiSend(sxMsg(SXOP.play),T); const tpBase=c2p(T);
+  for(let k=0;k<8;k++) burst(T0+k*beat,A);
+  // a: straight from recording: disarm, stop, go to start, Start Session and Play, all at the end of bar 2
+  let Pc=T0+8*beat; midiSend([0xB0,14,0],Pc); midiSend(sxMsg(SXOP.stop),Pc); midiSend(sxMsg(SXOP.start),Pc); midiSend(sxMsg(SXOP.session),Pc); midiSend(sxMsg(SXOP.play),Pc); const tpa=c2p(Pc);
+  await sleepTo(Pc+8*beat+0.6); mNow(sxMsg(SXOP.stop)); await sleep(600);
+  const zB=tfZero(tpBase-200,tpa), q0=zB!=null?(c2p(T0)-zB)/1000:0.4, lat0=zB!=null?Math.max(0,Math.min(0.3,(zB-tpBase)/1000)):0.02; // where the first tone sits on the tape (s); how long Play takes
+  R2.push({k:'a',name:'a. from recording: disarm, stop, go to start, Start Session, Play',Pc,T0,tp:tpa});
+  // b–f: from playback of the base. pass() plays from the start and returns when tape position 0 was (perf), so Pc can be aimed
+  const pass=async(say)=>{ if(!(await tpEnsureStart(id))) return null; setDs(id,say); const T=ctx.currentTime+0.5, tp=c2p(T); midiSend(sxMsg(SXOP.session),T-0.25>ctx.currentTime?T-0.25:T); midiSend(sxMsg(SXOP.play),T);
+    await sleepTo(T+0.9); const z=tfZero(tp-200,performance.now()); return z==null?null:{z,T0:p2c(z)+q0}; };
+  // two bars of silence recorded after the base, so the tape goes on past the end of bar 2
+  { const p=await pass('Lengthening the recording by two silent bars…'); if(p){ const a=p.T0+6.5*beat; midiSend([0xB0,14,127],a); midiSend([0xB0,14,0],a+9.5*beat); await sleepTo(a+8*beat+0.4); mNow(sxMsg(SXOP.stop)); await sleep(700); } }
+  const methods=[
+    ['b','b. from playback: stop, go to start, Play (no Start Session)',t=>{ midiSend(sxMsg(SXOP.stop),t); midiSend(sxMsg(SXOP.start),t); midiSend(sxMsg(SXOP.play),t); }],
+    ['c','c. from playback: go to start only, while it plays',t=>{ midiSend(sxMsg(SXOP.start),t); }],
+    ['d','d. from playback: stop, go to start, Start Session, Play',t=>{ midiSend(sxMsg(SXOP.stop),t); midiSend(sxMsg(SXOP.start),t); midiSend(sxMsg(SXOP.session),t); midiSend(sxMsg(SXOP.play),t); }]];
+  for(const [k,name,f] of methods){ const p=await pass(`${name.slice(3)}…`); if(!p){ R2.push({k,name,none:true}); continue; } const Pc=p.T0+8*beat; f(Pc); const tp=c2p(Pc); await sleepTo(Pc+8*beat+0.6); mNow(sxMsg(SXOP.stop)); await sleep(600); R2.push({k,name,Pc,T0:p.T0,tp}); }
+  // e: a cue at the in-point (set during one pass, in cue record mode), then a jump to it by holding its note at the end of bar 2
+  let p=null; if(await tpEnsureStart(id)){ setDs(id,'e. setting a cue at the in-point…'); const T=ctx.currentTime+0.6; midiSend(sxMsg(SXOP.session),T-0.25); midiSend(sxMsg(SXOP.play),T);
+    const tc=T+lat0+q0+md; midiSend([0xB0,16,127],tc-0.04); midiSend([0x90,70,100],tc); midiSend([0xB0,16,0],tc+0.12); await sleepTo(tc+2*beat); mNow(sxMsg(SXOP.stop)); await sleep(700); p=true;
+    mNow([0x90,70,100]); await sleep(90); mNow([0x80,70,0]); await sleep(150); mNow(sxMsg(SXOP.stop)); await sleep(350); R2.cuePos=await tpPosNow(); }
+  p=p&&await pass('e. jumping to the cue: its note held at the end of bar 2…');
+  if(p){ const Pc=p.T0+8*beat; midiSend([0x90,70,100],Pc); const tp=c2p(Pc); await sleepTo(Pc+8*beat+0.3); const off=performance.now(); mNow([0x80,70,0]); await sleep(1200); mNow(sxMsg(SXOP.stop)); await sleep(600); R2.push({k:'e',name:'e. jump to a cue at the in-point (its note held)',Pc,T0:p.T0,off,tp}); }
+  else R2.push({k:'e',name:'e. jump to a cue',none:true});
+  // f: restart as in b, then loop points at once (loop in at the in-point, loop out one loop later): does it wrap cleanly from the first time round?
+  const rb=R2.find(r=>r.k==='b'); let lagB=null; if(rb&&!rb.none){ const tp=rb.tp, bf=tfMoves(tp-400,tp-5), last=bf.length?bf[bf.length-1][1]:null, low=tfMoves(tp-5,tp+3000).filter(x=>x[1]>=20&&(last==null||x[1]<last-300)); if(low.length>=2) lagB=(medOf(low.slice(0,6).map(x=>x[0]-x[1]))-tp)/1000; }
+  p=await pass('f. restart as b, then loop points right away…');
+  if(p&&lagB!=null&&lagB>0&&lagB<2){ const Pc=p.T0+8*beat; methods[0][2](Pc); const tp=c2p(Pc); const zi=Pc+lagB+q0; midiSend([0xB0,17,1],zi+md); midiSend([0xB0,17,2],zi+8*beat+md+adj); await sleepTo(zi+3*8*beat+0.4); mNow([0xB0,17,0]); mNow(sxMsg(SXOP.stop)); await sleep(600); R2.push({k:'f',name:'f. restart as b, loop points set at once',Pc,T0:p.T0,zi,L:8*beat,tp}); }
+  else R2.push({k:'f',name:'f. loop points right after a restart',none:true,why:lagB==null?'b did not restart':'b took too long'});
+  const live=lpFlat(); LP.cap=null; const on=live?toneScan(live,[A])[0].on.map(t=>t+live.t0):[];
+  // the delay of the USB return: tones heard during the base pass against when the app played them
+  const lr=medOf(on.filter(t=>t>T0-0.05&&t<T0+8*beat).map(t=>{ const k=Math.round((t-T0)/beat); return t-(T0+k*beat); }).filter(x=>x>-0.05&&x<0.3))||0;
+  const L=[`Run 2 (restarting at the in-point), ${new Date().toLocaleTimeString()}, ${S.bpm} bpm: base tone on every beat of 2 bars; at the end of bar 2 each method tries to play the first beat again. “Gap” is how much later than a seamless loop the first beat came back (0 = seamless). The test’s first beat sits ${(q0*1000).toFixed(0)} ms into the tape, so a restart from the start of the tape adds that much; the figure in brackets takes it off.`];
+  const H=S.diag.fast=Object.assign(S.diag.fast||{},{r2:{}});
+  for(const r of R2){ if(r.none){ L.push(`${r.name}: did not run${r.why?` (${r.why})`:''}.`); H.r2[r.k]=null; continue; }
+    // positions strictly before the message, then moving positions after it that sit well below the last one: a restart.
+    // (go to start sends a "position 0" report at once, moving or not, so only reports from 20 ms up count)
+    const tp=r.tp!=null?r.tp:c2p(r.Pc), mv=tfMoves(tp-400,tp+4000), before=mv.filter(x=>x[0]<tp-5), last=before.length?before[before.length-1][1]:null,
+      after=mv.filter(x=>x[0]>=tp-5&&x[1]>=20), low=after.filter(x=>last==null||x[1]<last-300), dropped=low.length>=2, from=r.k==='e'?(R2.cuePos||q0*1000):0,
+      lag=dropped?Math.round(medOf(low.slice(0,6).map(x=>x[0]-(x[1]-from)))-tp):null;
+    const o0=on.find(t=>t>r.T0-0.2&&t<r.T0+0.5), exp=(o0!=null?o0:r.T0+lr)+8*beat, back=on.find(t=>t>exp-0.15&&t<exp+6), gap=back!=null?back-exp:null, g0=gap!=null?gap-(r.k==='e'?0:q0):null;
+    const keepOn=!dropped&&after.length>2;
+    let txt=`${r.name}: `;
+    if(!dropped) txt+=after.length>2?'the TP-7 ignored it and played on':'the tape stopped and did not run again';
+    else txt+=`the tape ran from the ${r.k==='e'?'cue':'start'} ${lag} ms after the message`;
+    if(!keepOn&&gap!=null) txt+=`; first beat back with a gap of ${(gap*1000).toFixed(0)} ms (${(g0*1000).toFixed(0)} ms from the in-point)`; else if(!keepOn) txt+='; the first beat did not come back';
+    if(r.k==='e'){ const st=(R.tpNotes||[]).filter(x=>x[1]==='playing'&&x[0]>r.off&&x[0]<r.off+1100); txt+=`; releasing the note ${st.some(x=>x[2]===0)?'stopped the tape':'did not stop the tape'}`; }
+    if(r.k==='f'){ const w0=on.filter(t=>t>r.Pc+0.05&&t<r.zi+lr+3*r.L+0.4), f0=w0[0], rd=[1,2].map(n=>{ if(f0==null) return null; const ws=w0.filter(t=>t>f0+n*r.L-0.3*beat&&t<f0+(n+1)*r.L-0.3*beat); if(!ws.length) return null;
+        const off=medOf(ws.map(t=>{ const x=(t-f0-n*r.L)/beat; return (x-Math.round(x))*beat*1000; })); return {n:ws.length,off:Math.round(off),first:Math.round((ws[0]-f0-n*r.L)/beat)}; });
+      txt+=`; ${rd.map((x,j)=>`after wrap ${j+1}: ${x?`${x.n} of 8 beats, ${x.off>=0?'+':''}${x.off} ms against a seamless loop${x.first>0?`, the first ${x.first} beat${x.first>1?'s':''} missing`:''}`:'nothing heard'}`).join('; ')}`; H.r2.wraps=rd; }
+    H.r2[r.k]={lag,gap:gap!=null?Math.round(gap*1000):null,g0:g0!=null?Math.round(g0*1000):null,ignored:keepOn};
+    L.push(txt+'.'); }
+  const cand=['a','b','d','e'].filter(k=>H.r2[k]&&H.r2[k].g0!=null).sort((x,y)=>H.r2[x].g0-H.r2[y].g0)[0];
+  if(R2.cuePos!=null) L.push(`The cue for e sits at ${R2.cuePos} ms on the tape; the in-point at ${(q0*1000).toFixed(0)} ms.`);
+  if(cand) L.push(`Shortest gap: ${cand} (${H.r2[cand].g0} ms from the in-point). A seamless looper on the TP-7 would need about 0 ms; Tinebox can cover a short gap with its own copy of the loop.`);
+  save(); tfVerdict(L,2); return cand?`Shortest restart gap: ${H.r2[cand].g0} ms (method ${cand}).`:'No method restarted the tape.'; }
+
+// Run 3 (may freeze the TP-7): jumping back while still recording. If recording carries on at the new place, the TP-7 could loop
+// by jumps instead of loop points, and overdubs could run straight through the wrap.
+async function runFast3(){ const id='tFast', e=await p4Need(); if(e) return e; let m=await tfPrep(id); if(m) return m; if(!(await lpOpenInput())) return 'Audio input was blocked.';
+  const {beat,md}=tplK(), A=P4.F.p1, B=P4.F.p2, C=P4.F.p3; const L=[`Run 3 (jumps while recording), ${new Date().toLocaleTimeString()}:`];
+  let T=ctx.currentTime+1.6; const T0=T+0.4; midiSend([0xB0,14,127],T-0.8); midiSend(sxMsg(SXOP.session),T-0.25); midiSend(sxMsg(SXOP.play),T); const tpBase=c2p(T), tpEnd=c2p(T0+8*beat); for(let k=0;k<8;k++) burst(T0+k*beat,A);
+  await sleepTo(T0+8*beat+0.3); mNow(sxMsg(SXOP.stop)); mNow([0xB0,14,0]); await sleep(700);
+  const zB=tfZero(tpBase-200,tpEnd), q0=zB!=null?(c2p(T0)-zB)/1000:0.4, lat0=zB!=null?Math.max(0,Math.min(0.3,(zB-tpBase)/1000)):0.02;
+  const trial=async(tone,label,jump)=>{ if(!(await tpEnsureStart(id))) return 'no rewind'; setDs(id,label); T=ctx.currentTime+0.5; midiSend(sxMsg(SXOP.session),T-0.25); midiSend(sxMsg(SXOP.play),T);
+    await sleepTo(T+0.9); const z=tfZero(c2p(T)-200,performance.now()); if(z==null) return 'did not play'; const t0=p2c(z)+q0, arm=t0+2*beat+0.5*beat, Pc=t0+8*beat;
+    midiSend([0xB0,14,127],arm); for(let k=3;k<16;k++) burst(t0+k*beat,tone); jump(Pc); await sleepTo(Pc+4*beat+0.2); mNow([0xB0,14,0]); await sleep(300); mNow(sxMsg(SXOP.stop)); await sleep(700);
+    return (await tpDead())?'froze':''; };
+  let r=await trial(B,'Armed while it plays, then go to start (0x4a) at the end of bar 2, still armed…',t=>midiSend(sxMsg(SXOP.start),t));
+  const res={go:r}; if(r==='froze'){ L.push('Go to start while recording: the TP-7 froze. Switch it off and on; the looper will not jump while recording.'); S.diag.fast=Object.assign(S.diag.fast||{},{r3:res}); save(); tfVerdict(L,3); return 'The TP-7 froze.'; }
+  // set a cue at the in-point for the second trial
+  if(await tpEnsureStart(id)){ T=ctx.currentTime+0.6; midiSend(sxMsg(SXOP.session),T-0.25); midiSend(sxMsg(SXOP.play),T); const tc=T+lat0+q0+md; midiSend([0xB0,16,127],tc-0.04); midiSend([0x90,71,100],tc); midiSend([0xB0,16,0],tc+0.12); await sleepTo(tc+0.5); mNow(sxMsg(SXOP.stop)); await sleep(700); }
+  r=await trial(C,'Armed while it plays, then the cue note at the end of bar 2, still armed…',t=>midiSend([0x90,71,100],t)); mNow([0x80,71,0]); res.cue=r;
+  if(r==='froze') L.push('Cue jump while recording: the TP-7 froze. Switch it off and on.');
+  const cap=r==='froze'?null:await p4Listen(id,8*beat+q0+2,{loopOff:true,say:'Playing back with the loop off: where did the recording go?'});
+  if(cap){ const sc=toneScan(cap,[A,B,C]), g=gridFit(sc[0].on,beat); if(g){ const ob=onGrid(g,sc[1].on), oc=onGrid(g,sc[2].on), earlyRaw=on=>on.filter(t=>t<g.a+2.5*g.b).length, late=o=>o.filter(x=>x.k>=3&&x.k<8).length, past=o=>o.filter(x=>x.k>=8).length;
+      res.b={early:earlyRaw(sc[1].on),late:late(ob),past:past(ob)}; res.c={early:earlyRaw(sc[2].on),late:late(oc),past:past(oc)};
+      L.push(`Go to start while recording: ${res.b.late} of 5 beats before the jump; after it, ${res.b.early} of 3 beats at the start of the loop${res.b.early?' (recording carried on after the jump: the TP-7 can loop by jumps)':' (recording did not carry on at the start)'}${res.b.past?`; ${res.b.past} beats went past the end instead (the jump did not happen)`:''}.`);
+      L.push(`Cue jump while recording: ${res.c.late} of 5 beats before the jump; after it, ${res.c.early} of 3 beats at the in-point${res.c.past?`; ${res.c.past} beats went past the end`:''}.`); }
+    else L.push('Playback: the base was not heard, so nothing could be placed.'); }
+  S.diag.fast=Object.assign(S.diag.fast||{},{r3:res}); save(); tfVerdict(L,3); return r==='froze'?'The TP-7 froze.':'Done: see below.'; }
+// each run replaces its own lines in the result and keeps the other runs' lines, in run order
+function tfVerdict(L,run){ const by={}; let c=null; ((S.diag.extra||{}).tFast||[]).forEach(x=>{ const m=/^Run (\d) /.exec(x); if(m) c=+m[1]; if(c!==run&&c!=null) (by[c]=by[c]||[]).push(x); }); by[run]=L;
+  verdict('tFast','info',[1,2,3].flatMap(n=>by[n]||[])); }
+
+// --- the switch check: what arrived in the fast-tap window, and a double tap of switch 2 (keyboard mode has no holds)
+DIAG.push(
+ {id:'tFast',t:'How fast the TP-7 can start and restart',how:'Automatic, nothing to press. MIDI setting cue; record sources line 1, USB 1 and USB 2. Each run makes a new TP-7 recording and uses tones from USB 1. Run 1 (about 30 s): five ways to start recording, timed by the TP-7’s own position reports, then played back to see how much of each start was kept. Run 2 (about 1.5 minutes): a 2-bar base, then at the end of bar 2 six ways to play its first beat again: straight from recording; stop, go to start and Play; go to start while playing; the same with Start Session; a jump to a cue; and loop points set right after a restart. It reports the gap you would hear at each restart. Run 3 (may freeze the TP-7): jumps back while still recording, to see whether overdubs could run straight through the loop point. These numbers decide how the footswitch looper can start and restart without the pause.',
+  acts:[['Run 1',runFast1],['Run 2',runFast2],['Run 3 (may freeze)',runFast3]],qs:[['Did the TP-7 do anything odd (stop, jump, show an error)?',['No','Yes (note what and when)']]]}
+);
+
 const DIAG_PLAN=[
   ['Part 1: your AirTurn BT500S-6. Mode 7 (MIDI) connected in GarageBand, or mode 2 (keyboard) paired in Bluetooth settings',['tPed']],
-  ['Part 2: the TP-7 looper, rehearsed, then played with your footswitch. MIDI setting cue; record sources line 1, USB 1 and USB 2',['tReh','tPedLoop','tKey']]
+  ['Part 2: the TP-7 looper, rehearsed, then played with your footswitch. MIDI setting cue; record sources line 1, USB 1 and USB 2',['tReh','tFast','tPedLoop','tKey']]
 ];
 (()=>{ const all=DIAG.slice(); DIAG.length=0;
   DIAG_PLAN.forEach(([g,ids])=>ids.forEach((id,i)=>{ const t=all.find(x=>x.id===id); if(t){ t.grp=i===0?g:null; DIAG.push(t); } }));
@@ -4081,7 +4222,7 @@ function bindDiag(){
     const b=e.target.closest('[data-dact]'); if(!b) return; const a=b.dataset.dact;
     if(a==='close'){ root.hidden=true; return; }
     if(a==='copy'){ const txt=diagReport(), ta=$('#dgReport'); ta.value=txt; try{ await navigator.clipboard.writeText(txt); toast('Report copied.'); }catch(err){ ta.focus(); ta.select(); toast('Select all the text in the box and copy it.'); } return; }
-    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.sx={}; D.p4=null; D.p4f=null; D.sxmap=null; D.sxw=null; D.sxs=null; D.seqE=null; D.seqO=null; D.rw4a=null; D.st=null; D.s3d=null; D.p2t=null; D.chm=null; D.ldub=null; D.src=null; D.es=null; D.edIn=null; D.ts=null; D.tw=null; D.tb=null; D.swp=null; D.inm=null; D.trr=null; D.set3=null; D.loop=null; D.ers=null; D.ped=null; D.reh=null; D.ped=null; D.key=null; D.pedChk=null; D.pedLoop=null; D.res_u3=null; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
+    if(a==='fresh'){ confirmTap(b,'Tap again to clear all answers',()=>{ const D=S.diag; D.sx={}; D.p4=null; D.p4f=null; D.sxmap=null; D.sxw=null; D.sxs=null; D.seqE=null; D.seqO=null; D.rw4a=null; D.st=null; D.s3d=null; D.p2t=null; D.chm=null; D.ldub=null; D.src=null; D.es=null; D.edIn=null; D.ts=null; D.tw=null; D.tb=null; D.swp=null; D.inm=null; D.trr=null; D.set3=null; D.loop=null; D.ers=null; D.ped=null; D.reh=null; D.ped=null; D.key=null; D.pedChk=null; D.pedLoop=null; D.fast=null; D.res_u3=null; D.res={}; D.tStartSug=null; D.latSug=null; D.calResult=null; D.calSug=null; D.mdSug=null; DIAG.forEach(t=>{ t.qs.forEach((q,qi)=>delete D.ans[t.id+':'+qi]); delete D.notes[t.id]; delete D.ran[t.id]; if(D.extra) delete D.extra[t.id]; if(D.lead) delete D.lead[t.id]; if(R.dgStatus) delete R.dgStatus[t.id]; }); D.calResult=null; D.calSug=null; save(); renderDiag(); toast('Answers cleared. Your TP-7 details stay.'); }); return; }
     if(a==='applyMD'){ if(S.diag.mdKind==='take'){ S.tp.takeCueDelay=+b.dataset.v; toast(`Delay for markers set during takes: ${S.tp.takeCueDelay} ms.`); } else { S.tp.mDelay=+b.dataset.v; toast(`Marker pass delay set to ${S.tp.mDelay} ms.`); } S.diag.mdSug=null; save(); renderDiag(); return; }
     if(a==='applyLat'){ S.looper.lat=+b.dataset.v/1000; S.looper.latHow='corrected by the diagnostics'; S.diag.latSug=null; save(); renderDiag(); toast(`Looper latency set to ${b.dataset.v} ms.`); return; }
     if(a==='apply'){ S.diag.tStartSug=null; setOffset(+b.dataset.v); renderDiag(); toast(`Timing offset set to ${S.tp.midiOffset} ms for ${offKey()}.`); return; }
@@ -4682,6 +4823,7 @@ if(!S.tp.mig10){ if(S.tp.mDelay===76) S.tp.mDelay=79; S.tp.mig10=true; } // 5 Oc
 if(!S.tp.mig11){ S.tp.midiLoop=-1; S.tp.mig11=true; } // 24 Oct: loop points sent during a take are ignored (heard bars 1 2 3 4)
 if(!S.tp.mig7){ if(S.tp.startMode==='start') S.tp.startMode='sysex'; if(S.tp.mDelay==null) S.tp.mDelay=30; S.tp.mig7=true; }
 if(!S.tp.mig6){ S.tp.offsets=Object.assign({'48 kHz, 1 ch':10,'96 kHz, 6 ch':4},S.tp.offsets||{}); S.tp.mig6=true; } // measured on this TP-7, 30 Sep and 1 Oct
+if(S.tp.mDelay==null) S.tp.mDelay=79;
 if(S.tp.clock==null) S.tp.clock=false; if(S.tp.midiOffset==null) S.tp.midiOffset=0; if(S.tp.cueEvery==null) S.tp.cueEvery=1; if(!S.tp.chk||typeof S.tp.chk!=='object') S.tp.chk={};
 buildPanels(); lpBuild(); setTimeout(()=>{ try{ tplKeyRender(); }catch(e){} },0); bindStick(); bindKeys(); bindChords(); bindReview(); bindDiag(); bindGlobal();
 R.tab='play'; R.shown=new Set(['play']); renderAll(); showTab('play'); requestAnimationFrame(frame);
