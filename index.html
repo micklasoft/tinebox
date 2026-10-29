@@ -1207,7 +1207,7 @@ function midiPump(){
   while(q.length&&q[0].due<=now+1.5){ const m=q.shift(); if(o) try{ o.send(m.bytes); }catch(e){} }
   if(q.length) R.mqT=setTimeout(midiPump,Math.max(0,q[0].due-performance.now()-1));
 }
-const APP_BUILD='66 (29 Oct 2026)';
+const APP_BUILD='67 (29 Oct 2026)';
 // 24 Oct: 0x04 toggles edit mode (no reply), 0x4a goes to the start (also in edit mode, where stop does not rewind), 0x3e calibrates the reel
 const SXOP={session:0x40,play:0x50,stop:0x51,edit:0x04,start:0x4a}; let sxId=0;
 const SXN={0x40:'Start Session',0x50:'Play',0x51:'Stop',0x04:'Edit mode toggle',0x4a:'Go to start',0x3e:'Reel calibration',0x09:'Select track',0x0a:'Set input',0x0b:'Read track',0x0c:'Read input',0x3d:'0x3d (self-test; never sent: the TP-7 froze after it on 25 Oct)'}, sxSent={};
@@ -3086,7 +3086,7 @@ async function tplFirst(o){
   tplSay(`Count-in, then recording section ${LETTERS[o.sec]||'?'}. Tap record again to close the loop.`); tplCapTimer(); return ''; }
 function tplCapTimer(){ const {bar}=tplK(), g=TPL.rec; clearTimeout(TPL.capT); if(!g) return;
   TPL.capT=setTimeout(()=>{ if(TPL.rec===g) tplEndFirst(g.z+TPL_CAP*bar-0.5); },Math.max(0,(g.z+TPL_CAP*bar-0.6-ctx.currentTime)*1000)); }
-async function tplEndFirst(tap,o){ const g=TPL.rec; if(!g||TPL.st!=='rec') return 'No loop is being recorded.'; o=o||{}; const G=TPL.gen; clearTimeout(TPL.capT);
+async function tplEndFirst(tap,o){ const g=TPL.rec; if(!g||TPL.st!=='rec') return 'No loop is being recorded.'; o=o||{}; const G=TPL.gen; clearTimeout(TPL.capT); if(g.ses&&g.k===0) tplFixStart(g);
   let {bar,md}=tplK(); const t=tap==null?ctx.currentTime:tap; let n=Math.max(1,Math.min(TPL_CAP,g.ses?Math.round((t-g.z)/bar):Math.ceil((t-g.z-0.3)/bar))), end=g.z+n*bar, L=n*bar; TPL.tempoMsg=null;
   // 29 Oct: "Tempo follows the loop": the first loop ends on the press; its bar count is the nearest whole number, and the tempo moves to fit
   if(o.follow&&g.k===0){ const Lp=t-g.z, nf=Math.max(1,Math.min(TPL_CAP,Math.round(Lp/bar))), bpm=240*nf/Lp;
@@ -3979,12 +3979,12 @@ async function runFast3(){ const id='tFast', e=await p4Need(); if(e) return e; l
   S.diag.fast=Object.assign(S.diag.fast||{},{r3:res}); save(); tfVerdict(L,3); return r==='froze'?'The TP-7 froze.':'Done: see below.'; }
 // each run replaces its own lines in the result and keeps the other runs' lines, in run order
 function tfVerdict(L,run){ const by={}; let c=null; ((S.diag.extra||{}).tFast||[]).forEach(x=>{ const m=/^Run (\d) /.exec(x); if(m) c=+m[1]; if(c!==run&&c!=null) (by[c]=by[c]||[]).push(x); }); by[run]=L;
-  verdict('tFast','info',[1,2,3].flatMap(n=>by[n]||[])); }
+  verdict('tFast','info',[1,2,3,4].flatMap(n=>by[n]||[])); }
 
 // --- the switch check: what arrived in the fast-tap window, and a double tap of switch 2 (keyboard mode has no holds)
 DIAG.push(
- {id:'tFast',t:'How fast the TP-7 can start and restart',how:'Automatic, nothing to press. MIDI setting cue; record sources line 1, USB 1 and USB 2. Each run makes a new TP-7 recording and uses tones from USB 1. Run 1 (about 30 s): five ways to start recording, timed by the TP-7’s own position reports, then played back to see how much of each start was kept. Run 2 (about 2.5 minutes, updated in build 65): on 29 Oct every restart failed when its messages left at the same moment, so this run spaces them: go to start, then Play 0, 50, 100, 200 or 400 ms later; tap a cue at the in-point, then Play; and from recording: disarm, go to start, Play, with 100 to 400 ms between them. Then the quickest timing that worked runs a whole cycle: close, restart and set the loop points at once, checked over three times round. It reports the gap you would hear at each restart. Run 3 (may freeze the TP-7): jumps back while still recording, to see whether overdubs could run straight through the loop point. These numbers decide how the footswitch looper can start and restart without the pause.',
-  acts:[['Run 1',runFast1],['Run 2',runFast2b],['Run 3 (may freeze)',runFast3]],qs:[['Did the TP-7 do anything odd (stop, jump, show an error)?',['No','Yes (note what and when)']]]}
+ {id:'tFast',t:'How fast the TP-7 can start and restart',how:'Automatic, nothing to press. MIDI setting cue; record sources line 1, USB 1 and USB 2. Each run makes a new TP-7 recording and uses tones from USB 1. Run 1 (about 30 s): five ways to start recording, timed by the TP-7’s own position reports, then played back to see how much of each start was kept. Run 2 (about 2.5 minutes, updated in build 65): on 29 Oct every restart failed when its messages left at the same moment, so this run spaces them: go to start, then Play 0, 50, 100, 200 or 400 ms later; tap a cue at the in-point, then Play; and from recording: disarm, go to start, Play, with 100 to 400 ms between them. Then the quickest timing that worked runs a whole cycle: close, restart and set the loop points at once, checked over three times round. It reports the gap you would hear at each restart. Run 3 (may freeze the TP-7): jumps back while still recording, to see whether overdubs could run straight through the loop point. Run 4 (about 1 minute, may freeze; new in build 67): looping by jumps alone, no loop points. On 29 Oct at 17:47 go to start made the playing tape jump to the start and play on, 52 to 63 ms after the message, every time. Run 4 records a 2-bar first pass the way switch 1 starts one, closes it with go to start while it still records, loops three more times by go to start, and records a layer across one of the jumps. It reports how exact each jump was and whether the layer carried on through it. These numbers decide how the footswitch looper can close a loop without the pause.',
+  acts:[['Run 1',runFast1],['Run 2',runFast2b],['Run 3 (may freeze)',runFast3],['Run 4 (may freeze)',runFast4]],qs:[['Did the TP-7 do anything odd (stop, jump, show an error)?',['No','Yes (note what and when)']]]}
 );
 
 /* build 65 (29 Oct, 13:45 report of test 3, "How fast the TP-7 can start and restart"), on the real TP-7:
@@ -4036,7 +4036,7 @@ async function runFast2b(){ const id='tFast', e=await p4Need(); if(e) return e; 
     return {ran,lag,gap:gap!=null?Math.round(gap*1000):null,g0:g0!=null?Math.round(g0*1000):null,playedOn:!ran&&after.length>2}; };
   let on=on0(); const res={}; R2.forEach(r=>{ if(!r.none) res[r.k]=judge(r,on); });
   // the whole cycle with the quickest timing that worked from recording: close (disarm, restart) and set the loop points straight away
-  const best=['R100','R200','R400'].find(k=>res[k]&&res[k].ran&&res[k].lag!=null)||['P50','P100','P200','P400'].find(k=>res[k]&&res[k].ran&&res[k].lag!=null&&k!=='P0');
+  const best=['R200','R400'].find(k=>res[k]&&res[k].ran&&res[k].lag!=null)||['P50','P100','P200','P400'].find(k=>res[k]&&res[k].ran&&res[k].lag!=null&&k!=='P0');
   let F=null;
   if(best){ const v=V.find(x=>x[0]===best), p=await pass(`Whole cycle with ${best}: close the loop, restart, set loop points at once…`);
     if(p){ const Pc=p.T0+8*beat; midiSend([0xB0,14,127],p.T0+5.5*beat); v[2](Pc); const tp=c2p(Pc), zi=Pc+res[best].lag/1000+q0, L=8*beat;
@@ -4050,7 +4050,7 @@ async function runFast2b(){ const id='tFast', e=await p4Need(); if(e) return e; 
     L.push(`${r.k} ${r.name}: ${j.ran?`the tape ran again ${j.lag} ms after the first message${j.g0!=null?`; gap ${j.g0} ms`:'; the first beat was not heard'}`:j.playedOn?'the TP-7 played on, no restart':'the tape stopped and stayed stopped'}.`); });
   if(F) L.push(`Whole cycle (${F.best}, then loop in and loop out at once): ${F.j.ran?`restart ${F.j.lag} ms after the message, gap ${F.j.g0!=null?F.j.g0+' ms':'?'}; ${F.rounds.map((x,i)=>`after wrap ${i+1}: ${x?`${x.n} of 8 beats, ${x.off>=0?'+':''}${x.off} ms against a seamless loop`:'nothing heard'}`).join('; ')}`:'the restart did not happen'}.`);
   else L.push('Whole cycle: no timing restarted the tape, so it did not run.');
-  const ok=Object.entries(res).filter(([k,j])=>j.ran&&j.g0!=null).sort((a,b)=>a[1].g0-b[1].g0)[0];
+  const ok=Object.entries(res).filter(([k,j])=>j.ran&&j.g0!=null&&!(k[0]==='C'&&R2.cuePos!=null&&Math.abs(R2.cuePos-q0*1000)>30)).sort((a,b)=>a[1].g0-b[1].g0)[0];
   if(ok) L.push(`Quickest restart: ${ok[0]}, gap ${ok[1].g0} ms.`);
   S.diag.fast=Object.assign(S.diag.fast||{},{r2:res,r2F:F?{best:F.best,j:F.j,rounds:F.rounds}:null}); save(); tfVerdict(L,2);
   return ok?`Quickest restart: ${ok[0]} (gap ${ok[1].g0} ms).`:'No timing restarted the tape.'; }
@@ -4071,7 +4071,7 @@ async function runFast2b(){ const id='tFast', e=await p4Need(); if(e) return e; 
 // how long the TP-7 takes to run after Play alone (l1) and after the looper's way, Start Session 0.25 s ahead (l2): test 3 Run 1
 // measured both on 29 Oct (29 and 65 ms); these are the defaults until it runs again
 function tplLam(){ const r=(S.diag&&S.diag.fast&&S.diag.fast.r1)||[], ok=x=>!!(x&&x.lat!=null&&x.lat>0&&x.lat<250);
-  return {l1:(ok(r[1])?r[1].lat:30)/1000,l2:(ok(r[4])?r[4].lat:65)/1000}; }
+  return {l1:(S.tp.lagPlay!=null?S.tp.lagPlay:ok(r[1])?r[1].lat:30)/1000,l2:(ok(r[4])?r[4].lat:65)/1000}; }
 // the app time of what you hear at performance time p (a press or a tap); a MIDI message sent now belongs to that time less the offset
 function tplP2T(p){ return ctx.currentTime+(p-performance.now())/1000-lat()-0.006; }
 function tplNowT(){ return tplP2T(performance.now())-(+S.tp.midiOffset||0)/1000; }
@@ -4151,7 +4151,7 @@ async function tplSelFast(track,input){ const a=sxReq(0x7F,[0x09,track]), b=sxRe
 async function tplRecNow(which){ if(TPL.st!=='ready'||!TPL.session) return; const G=TPL.gen, {bar}=tplK(), lam=tplLam(), sec=TPL.sec0!=null&&S.sections[TPL.sec0]?TPL.sec0:R.cur;
   TPL.st='go';
   if(which===1){ if(!(await tplSelFast(1,TPIN.usb1))){ if(G===TPL.gen){ TPL.st='ready'; tplSay('The TP-7 did not take track 2. Switch 1 records guitar.'); } return; } if(G!==TPL.gen) return; tplT2(true); }
-  const P=tplNowT(); mNow([0xB0,14,127]); mNow(sxMsg(SXOP.play)); TPL.recSent=performance.now(); const z=P+lam.l1;
+  const P=tplNowT(); mNow([0xB0,14,127]); mNow(sxMsg(SXOP.play)); TPL.recSent=performance.now(); TPL.recP=P; const z=P+lam.l1;
   if(TPL.key&&TPL.key.st==='listening'){ kcStop(); TPL.keyHold=false; } TPL.key=null; if(which===0) tplKeyGo();
   tplClockAt(z,sec);
   // s: where the loop starts, counted from a listen pass's Play (Start Session ahead): the tape ran l1 after this Play, l2 after that one
@@ -4313,6 +4313,74 @@ async function runPedLoop2s(){ const id='tPedLoop';
   const dead=await tpDead(); if(dead) plChk('The TP-7 still answers',false,'it stopped answering');
   const b=await plEnd(); const L=[`Run 2, ${new Date().toLocaleTimeString()}, ${S.bpm} bpm:`,...PL.L,`TP-7 left on ${trIn(b)}.`]; H.r2ok=PL.bad===0; save();
   plVerdict(L,2); return PL.bad?`${PL.bad} check${PL.bad>1?'s':''} failed: see below.`:'Every awkward press was handled.'; }
+
+/* build 67 (29 Oct, 17:51 report of test 3, build 66):
+   - Go to start (0x4a) while the tape plays jumped to the start and played on, 52–63 ms after the message, in every restart of Run 2
+     (P0 to P400, R100 to R400); a Play after it changed nothing. At 13:45 go to start had stopped the tape instead.
+   - Run 3: go to start while recording jumped as well (positions restarted at 0 while still armed); no freeze. A cue note while
+     recording did not jump (recording ran on past the end, as at 13:45).
+   - The one freeze: the whole cycle, disarm and go to start at the same moment, then loop in 0.45 s after the jump and loop out.
+   - The start lag of Play alone was 59–61 ms (29–31 ms at 13:45); with Start Session 2 s ahead 34–36 ms both times.
+   - Reconnecting the TP-7 left the app's audio input dead, so Run 3's playback heard nothing. */
+
+// the session's first pass: the loop start comes from when the tape actually ran (its position reports), not from an expected lag;
+// the measured lag is kept and used for the next session's bar 1
+function tplFixStart(g){ if(!g||g.fixed||TPL.recSent==null||TPL.recP==null) return; g.fixed=true;
+  const zp=tfZero(TPL.recSent-30,performance.now(),100); if(zp==null){ pedLog('st','no position reports from the first pass: its start is estimated'); return; }
+  const la=Math.max(0,Math.min(0.25,(zp-TPL.recSent)/1000)), lam=tplLam(), s=Math.max(0.005,lam.l2+(g.z-(TPL.recP+la)));
+  pedLog('st',`the tape ran ${Math.round(la*1000)} ms after Play (bar 1 was placed for ${Math.round((g.z-TPL.recP)*1000)} ms)`);
+  g.s=s; g.la=Math.round(la*1000); S.tp.lagPlay=S.tp.lagPlay==null?g.la:Math.round(0.5*S.tp.lagPlay+0.5*g.la); save(); }
+
+// the audio input after the TP-7 was unplugged: its MIDI port going away marks the input for reopening
+(()=>{ const ml=midiList; midiList=function(e){ try{ const p=e&&e.port; if(p&&/tp.?7/i.test(p.name||'')&&!/blue/i.test(p.name||'')&&p.state==='disconnected'&&LP.stream){ LP.stale=true; pedLog('app','TP-7 disconnected: the audio input will be opened again'); } }catch(x){} return ml.apply(this,arguments); }; })();
+
+// Run 4: looping by jumps, without loop points. A first pass started as switch 1 does; closed by go to start while it still records,
+// the disarm landing with the jump; three more jumps, one per time round; a layer armed across one jump. It answers whether the
+// looper can close a loop without the pause and let layers cross the loop point.
+async function runFast4(){ const id='tFast', e=await p4Need(); if(e) return e; let m=await tfPrep(id); if(m) return m; if(!(await lpOpenInput())) return 'Audio input was blocked.';
+  const {beat}=tplK(), L=8*beat, A=P4.F.p1, B=P4.F.p2, PL=sxMsg(SXOP.play), GS=sxMsg(SXOP.start), ST=sxMsg(SXOP.stop), F0=S.diag.fast||{};
+  const lags=F0.r2?['P0','P50','P100','P200','P400'].map(k=>F0.r2[k]).filter(x=>x&&x.ran&&x.lag!=null).map(x=>x.lag):[], lj=lags.length?medOf(lags):55;
+  const p2a=p=>p2c(p)-lat()-0.006; // the app time whose message leaves at performance time p (the measured lags include the MIDI offset)
+  const res={lj}, L4=[`Run 4 (looping by jumps, no loop points), ${new Date().toLocaleTimeString()}, ${S.bpm} bpm. Go to start leaves ${lj} ms before each loop end${lags.length?' (the median jump time in Run 2)':' (a guess: Run 2 has not run)'}.`];
+  const done=w=>{ S.diag.fast=Object.assign(S.diag.fast||{},{r4:res}); save(); tfVerdict(L4,4); return w; };
+  mNow([0xB0,17,0]); lpStartCap(90);
+  // 1. the first pass, as switch 1 starts one: arm and Play at once; a tone on every beat for 2 bars
+  setDs(id,'Run 4: a 2-bar first pass, started as switch 1 does…'); const P=ctx.currentTime+0.3, tP=c2p(P); midiSend([0xB0,14,127],P); midiSend(PL,P);
+  const b0=P+tplLam().l1+0.02; for(let k=0;k<8;k++) burst(b0+k*beat,A);
+  await sleepTo(P+1.3); const zp=tfZero(tP-50,performance.now(),100);
+  if(zp==null){ mNow([0xB0,14,0]); mNow(ST); L4.push('No position reports: the tape did not run, so nothing was tried.'); return done('The tape did not run.'); }
+  res.start=Math.round(zp-tP);
+  // 2. the loop end of round k (round 0 = the first pass) in performance time; go to start lj before it, four times;
+  //    the first one while still recording, with the disarm landing 20 ms before the jump
+  const J=k=>zp+(k+1)*L*1000, sent=[];
+  for(let k=0;k<4;k++){ const t=p2a(J(k)-lj); midiSend(GS,t); sent.push(c2p(t)); }
+  midiSend([0xB0,14,0],p2a(J(0)-20));
+  // 3. a layer across the jump at the end of round 2: armed from beat 5 of round 2 to beat 4 of round 3
+  midiSend([0xB0,14,127],b0+2*L+4.5*beat); midiSend([0xB0,14,0],b0+3*L+3.6*beat); [5,6,7].forEach(n=>burst(b0+2*L+n*beat,B)); [0,1,2,3].forEach(n=>burst(b0+3*L+n*beat,B));
+  setDs(id,'Run 4: closed by a jump, looping by jumps, a layer across one of them…'); await sleepTo(b0+4*L+4*beat); mNow([0xB0,14,0]); mNow(ST); await sleep(700);
+  if(await tpDead()){ res.froze=true; L4.push('The TP-7 stopped answering: it froze during this run. Switch it off and on and connect again; the report shows how far it got.'); return done('The TP-7 froze.'); }
+  // when each jump happened, from the position reports after it
+  res.jumps=sent.map(mp=>{ const p=tfMoves(mp-10,mp+1100).filter(x=>x[0]>mp&&x[1]>=100&&x[1]<1000); return p.length?Math.round(medOf(p.map(x=>x[0]-x[1]))-mp):null; });
+  // what came back, per time round: how many of its beats, and its timing against round 1 (each jump sets its round's timing)
+  const live=lpFlat(), on=live?toneScan(live,[A,B]).map(x=>x.on.map(t=>t+live.t0)):[[],[]]; LP.cap=null;
+  const ex=(k,n)=>b0+k*L+n*beat, wrap=x=>((x%beat)+1.5*beat)%beat-0.5*beat;
+  res.rounds=[1,2,3,4].map(k=>{ const nb=k===4?4:8, w=on[0].filter(t=>t>ex(k,0)-0.45*beat&&t<ex(k,nb)-0.45*beat); if(w.length<2) return {n:w.length,of:nb,d:null};
+    const d=medOf(w.map(t=>wrap(t-ex(k,0)))); let n=0; for(let i=0;i<nb;i++) if(on[0].some(t=>Math.abs(t-(ex(k,i)+d))<0.2*beat)) n++; return {n,of:nb,d:Math.round(d*1000)}; });
+  // the layer on the tape: played back with nothing looping, its beats placed against the base's last beats
+  const cap=await p4Listen(id,L+1.5,{loopOff:true,say:'Run 4: playing the recording back: where did the layer go?'});
+  if(cap){ const sc=toneScan(cap,[A,B]), a=sc[0].on, bb=sc[1].on, last=a.length?a[a.length-1]:null;
+    if(a.length>=4&&last!=null){ const idx=t=>{ const j=a.findIndex(x=>Math.abs(x-t)<0.2*beat); return j<0?null:7-(a.length-1-j); }, ks=bb.map(idx).filter(k=>k!=null);
+      res.pre=ks.filter(k=>k>=5).length; res.post=ks.filter(k=>k>=0&&k<=3).length; res.aTape=a.length; } else res.aTape=a.length; }
+  // the report
+  const j=res.jumps, R=res.rounds, ms=x=>x==null?'?':`${x>=0?'+':''}${x} ms`, er=x=>x==null?'none':`${x} ms (${ms(x-lj)} against the aim)`, d1=R[0]&&R[0].d;
+  L4.push(`First pass: the tape ran ${res.start} ms after Play.`);
+  L4.push(`Closing by a jump while recording: ${j[0]!=null?`the tape jumped ${er(j[0])}`:'no jump: the tape ran on or stopped'}${R[0]?`; time round 1: ${R[0].n} of 8 beats`:''}. (+ is late: a gap at the loop point; − is early: the loop's end is cut.)`);
+  L4.push(`Jumps at the end of time rounds 1 to 3: ${j.slice(1).map(er).join(', ')}; beats heard per time round: ${R.map(r=>r?`${r.n} of ${r.of}`:'?').join(', ')}${d1!=null?`; each round's timing against round 1: ${R.slice(1).map(r=>r&&r.d!=null?ms(r.d-d1):'?').join(', ')}`:''}.`);
+  if(res.post!=null) L4.push(`A layer armed across a jump: ${res.pre} of 3 beats before it and ${res.post} of 4 after it are on the tape${res.post>=3?': recording carries on through a jump, so layers can cross the loop point.':res.post===0?': recording stopped at the jump.':'.'}`);
+  else L4.push(`The playback of the tape was ${cap?'not clear enough to place the layer':'not heard (audio input)'}.`);
+  const okJ=j.every(x=>x!=null&&Math.abs(x-lj)<=15), okR=R.every(r=>r&&r.n>=r.of-1&&r.d!=null&&(d1==null||Math.abs(r.d-d1)<=15));
+  res.ok=okJ&&okR; L4.push(res.ok?'Looping by jumps works here: every jump came within 15 ms of its aim and every time round kept its beats. The looper can close a loop without the pause.':'Looping by jumps is not reliable here yet: see the numbers above.');
+  return done(res.ok?'Looping by jumps works.':'See the numbers below.'); }
 
 const DIAG_PLAN=[
   ['Part 1: your AirTurn BT500S-6. Mode 7 (MIDI) connected in GarageBand, or mode 2 (keyboard) paired in Bluetooth settings',['tPed']],
@@ -4588,14 +4656,15 @@ const LP={stream:null,sp:null,cap:null,capMax:0,rec:null,buf:null,steps:32,phase
 function lpGain(){ if(!A.loopGain){ A.loopGain=ctx.createGain(); A.loopGain.gain.value=S.looper.muted?0:S.looper.level; A.loopGain.connect(A.master); } return A.loopGain; }
 function lpApply(){ if(ctx&&A.master) lpGain().gain.setTargetAtTime(S.looper.muted?0:S.looper.level,ctx.currentTime,0.02); const b=$('#loopBtn'); if(b) b.setAttribute('aria-pressed',String(!!LP.buf&&!S.looper.muted)); }
 async function lpOpenInput(){
-  if(LP.stream) return true;
+  if(LP.stream){ const t0=LP.stream.getAudioTracks()[0]; if(t0&&t0.readyState==='live'&&!LP.stale) return true;
+    try{ if(LP.sp) LP.sp.disconnect(); if(LP.srcN) LP.srcN.disconnect(); LP.stream.getTracks().forEach(x=>x.stop()); }catch(e){} LP.stream=null; LP.stale=false; try{ pedLog('app','audio input opened again (it had ended or the TP-7 was reconnected)'); }catch(e){} }
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ toast('This browser offers no audio input.'); return false; }
   try{ if(navigator.audioSession) navigator.audioSession.type='play-and-record'; }catch(e){}
   try{ LP.stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:{ideal:8}}}); }
   catch(e){ try{ if(navigator.audioSession) navigator.audioSession.type='playback'; }catch(x){} toast('Audio input was blocked ('+e.name+').'); return false; }
-  const tr=LP.stream.getAudioTracks()[0], st=tr&&tr.getSettings?tr.getSettings():{};
+  const tr=LP.stream.getAudioTracks()[0], st=tr&&tr.getSettings?tr.getSettings():{}; if(tr) tr.addEventListener('ended',()=>{ LP.stale=true; });
   LP.nch=Math.max(1,Math.min(8,st.channelCount||2));
-  const src=ctx.createMediaStreamSource(LP.stream), z=ctx.createGain(); z.gain.value=0; LP.sp=ctx.createScriptProcessor(2048,Math.max(2,LP.nch),2);
+  const src=LP.srcN=ctx.createMediaStreamSource(LP.stream), z=ctx.createGain(); z.gain.value=0; LP.sp=ctx.createScriptProcessor(2048,Math.max(2,LP.nch),2);
   LP.sp.channelCountMode='explicit'; LP.sp.channelInterpretation='discrete';
   LP.sp.onaudioprocess=e=>{ const ib=e.inputBuffer, n=Math.min(ib.numberOfChannels,LP.nch), pk=LP.pk||(LP.pk=new Float32Array(8));
     for(let c=0;c<n;c++){ const d=ib.getChannelData(c); let m=0; for(let i=0;i<d.length;i+=2){ const v=Math.abs(d[i]); if(v>m) m=v; } pk[c]=Math.max(m,pk[c]*0.85); if(LP.scan) LP.scan[c]=Math.max(LP.scan[c],m); }
